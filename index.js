@@ -42,15 +42,15 @@ const client = new Client({
 });
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+const token = process.env.DISCORD_BOT_TOKEN;
 const chatHistories = {};
 const activeUsersInChannels = {};
 const customInstructions = {};
 const userPreferredImageModel = {};
 const userPreferredSpeechModel = {};
 const userResponsePreference = {};
-const activeRequests = new Set();
 const alwaysRespondChannels = {};
-const token = process.env.DISCORD_BOT_TOKEN;
+const activeRequests = new Set();
 
 const activities = [
     { name: 'With Code', type: ActivityType.Playing },
@@ -60,7 +60,6 @@ const activities = [
 ];
 
 let activityIndex = 0;
-
 client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}!`);
   
@@ -639,67 +638,11 @@ async function processSpeechGet(interaction) {
     .setLabel("What's your text?")
     .setStyle(TextInputStyle.Paragraph)
     .setMinLength(10)
-    .setMaxLength(4000);
+    .setMaxLength(3900);
 
   modal.addComponents(new ActionRowBuilder().addComponents(textInput));
 
   await interaction.showModal(modal);
-}
-
-async function speechGen(prompt) {
-  const sessionHash = "test123";
-  const urlFirstRequest = 'https://mrfakename-melotts.hf.space/queue/join?';
-  const dataFirstRequest = {
-    data: ["EN-US", prompt, 1, "EN"],
-    event_data: null,
-    fn_index: 1,
-    trigger_id: 8,
-    session_hash: sessionHash
-  };
-
-  try {
-    const responseFirst = await axios.post(urlFirstRequest, dataFirstRequest);
-    console.log(responseFirst.data);
-  } catch (error) {
-    console.error("Error in the first request:", error);
-    return null;
-  }
-
-  const urlSecondRequest = `https://mrfakename-melotts.hf.space/queue/data?session_hash=${sessionHash}`;
-
-  // Return a new Promise that resolves with the URL when found
-  return new Promise((resolve, reject) => {
-    axios.get(urlSecondRequest, {
-      responseType: 'stream'
-    }).then(responseSecond => {
-      let fullData = '';
-
-      responseSecond.data.on('data', (chunk) => {
-        fullData += chunk.toString();
-
-        if (fullData.includes('"msg": "process_completed"')) {
-          const lines = fullData.split('\n');
-          for (const line of lines) {
-            if (line.includes('"msg": "process_completed"')) {
-              try {
-                const dataDict = JSON.parse(line.slice(line.indexOf('{')));
-                const fullUrl = dataDict.output.data[0].url;
-                console.log(fullUrl);
-                resolve(fullUrl); // Resolve the promise with the URL
-                break;
-              } catch (parseError) {
-                console.error("Parsing error:", parseError);
-                reject(parseError);
-              }
-            }
-          }
-        }
-      });
-    }).catch(error => {
-      console.error("Error in second request event stream:", error);
-      reject(error);
-    });
-  });
 }
 
 async function speechGen2(prompt) {
@@ -797,8 +740,7 @@ async function changeSpeechModel(interaction) {
   // Create buttons for each model
   const buttons = [
     new ButtonBuilder().setCustomId('select-speech-model-1').setLabel('1').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('select-speech-model-2').setLabel('2').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('select-speech-model-3').setLabel('3').setStyle(ButtonStyle.Primary)
+    new ButtonBuilder().setCustomId('select-speech-model-2').setLabel('2').setStyle(ButtonStyle.Primary)
   ];
 
   // Split buttons into multiple ActionRows if there are more than 5 buttons
@@ -830,8 +772,6 @@ async function generateSpeechWithPrompt(prompt, userId, language) {
       return await speechGen(prompt);
     } else if (selectedModel === "2") {
       return await speechGen2(prompt);
-    } else if (selectedModel === "3") {
-      return await speechGen3(prompt, language);
     }
   } catch (error) {
     console.error('Error generating image:', error);
@@ -1328,33 +1268,38 @@ async function compressImage(buffer) {
 async function handleTextFileMessage(message) {
   let messageContent = message.content.replace(new RegExp(`<@!?${client.user.id}>`), '').trim();
 
-  const fileAttachments = message.attachments.filter((attachment) =>
-    attachment.contentType?.startsWith('application/pdf') ||
-    attachment.contentType?.startsWith('text/plain') ||
-    attachment.contentType?.startsWith('text/html') ||
-    attachment.contentType?.startsWith('text/css') ||
-    attachment.contentType?.startsWith('application/javascript') ||
-    attachment.contentType?.startsWith('application/json')
-  );
+  const supportedMimeTypes = [
+    'application/pdf', 'text/plain', 'text/html', 'text/css',
+    'application/javascript', 'application/json', 'text/x-python',
+    'application/x-yaml', 'text/markdown', 'application/xml'
+  ];
+
+  const supportedFileExtensions = [
+    'md', 'yaml', 'yml', 'xml', 'env', 'sh', 'bat', 'rb', 'c', 'cpp', 'cc',
+    'cxx', 'h', 'hpp', 'java'
+  ];
+
+  // Filter attachments for supported types and extensions
+  const fileAttachments = message.attachments.filter((attachment) => {
+    const fileMimeType = attachment.contentType?.split(';')[0].trim();
+    const fileExtension = attachment.name.split('.').pop().toLowerCase();
+    return supportedMimeTypes.includes(fileMimeType) || supportedFileExtensions.includes(fileExtension);
+  });
 
   if (fileAttachments.size > 0) {
     let botMessage = await message.reply({ content: '> `Processing your document(s)...`' });
     let formattedMessage = messageContent;
 
-    // Retrieve extracted text from all attachments
     for (const [attachmentId, attachment] of fileAttachments) {
-      let extractedText;
-      if (attachment.contentType?.startsWith('application/pdf')) {
-        extractedText = await extractTextFromPDF(attachment.url);
-      } else {
-        extractedText = await fetchTextContent(attachment.url);
-      }
+      let extractedText = await (attachment.contentType?.startsWith('application/pdf') ?
+        extractTextFromPDF(attachment.url) :
+        fetchTextContent(attachment.url));
+
       formattedMessage += `\n\n[${attachment.name}] File Content:\n"${extractedText}"`;
     }
 
-    // Load the text model for handling the conversation
+    // Load the text model and handle the conversation
     const model = await genAI.getGenerativeModel({ model: 'gemini-pro' });
-
     const chat = model.startChat({
       history: getHistory(message.author.id),
       safetySettings,
@@ -1371,14 +1316,23 @@ function hasImageAttachments(message) {
 }
 
 function hasTextFileAttachments(message) {
-  return message.attachments.some((attachment) =>
-    attachment.contentType?.startsWith('application/pdf') ||
-    attachment.contentType?.startsWith('text/plain') ||
-    attachment.contentType?.startsWith('text/html') ||
-    attachment.contentType?.startsWith('text/css') ||
-    attachment.contentType?.startsWith('application/javascript') ||
-    attachment.contentType?.startsWith('application/json')
-  );
+  const supportedMimeTypes = [
+    'application/pdf', 'text/plain', 'text/html', 'text/css',
+    'application/javascript', 'text/x-python', 'application/json',
+    'application/x-yaml', 'text/markdown', 'application/xml'
+  ];
+
+  const supportedFileExtensions = [
+    'md', 'yaml', 'yml', 'xml', 'env', 'sh', 'bat', 'rb', 'c', 'cpp', 'cc',
+    'cxx', 'h', 'hpp', 'java'
+  ];
+
+  return message.attachments.some((attachment) => {
+    const fileMimeType = attachment.contentType?.split(';')[0].trim();
+    const fileExtension = attachment.name.split('.').pop().toLowerCase();
+
+    return supportedMimeTypes.includes(fileMimeType) || supportedFileExtensions.includes(fileExtension);
+  });
 }
 
 async function fetchTextContent(url) {
