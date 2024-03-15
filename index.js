@@ -160,26 +160,24 @@ client.once('ready', async () => {
 
 client.on('messageCreate', async (message) => {
   try {
-    // Prevents the bot from responding to its own messages
     if (message.author.bot) return;
 
-    // Checks if the bot is required to reply in the channel, if mentioned, or in DMs
     const isDM = message.channel.type === ChannelType.DM;
-    const isBotMentioned = message.mentions.users.has(client.user.id);
-    const shouldAlwaysRespond = alwaysRespondChannels[message.channelId];
-    const isUserActiveInChannel = activeUsersInChannels[message.channelId]?.[message.author.id] || isDM;
+    const mentionPattern = new RegExp(`^<@!?${client.user.id}>(?:\\s+)?(generate|imagine)`, 'i');
+    const startsWithPattern = /^generate|^imagine/i;
+    const command = message.content.match(mentionPattern) || message.content.match(startsWithPattern);
 
-    if (isUserActiveInChannel || (isBotMentioned && !isDM) || shouldAlwaysRespond) {
-      if (message.content.toLowerCase().startsWith(`<@${client.user.id}>generate`) || message.content.toLowerCase().startsWith(`<@${client.user.id}> generate`) || message.content.toLowerCase().startsWith('generate') || message.content.toLowerCase().startsWith(`<@${client.user.id}>imagine`) || message.content.toLowerCase().startsWith(`<@${client.user.id}> imagine`) || message.content.toLowerCase().startsWith('imagine')) {
-        const prompt = message.content
-          .toLowerCase()
-          .replace(new RegExp(`<@${client.user.id}> generate`), '')
-          .replace(new RegExp(`<@${client.user.id}>generate`), '')
-          .replace('generate', '')
-          .replace(new RegExp(`<@${client.user.id}> imagine`), '')
-          .replace(new RegExp(`<@${client.user.id}>imagine`), '')
-          .replace('imagine', '')
-          .trim();
+    // Decide if the bot should respond based on channel conditions
+    const shouldRespond = (
+      alwaysRespondChannels[message.channelId] ||
+      message.mentions.users.has(client.user.id) && !isDM ||
+      activeUsersInChannels[message.channelId]?.[message.author.id] || isDM
+    );
+
+    if (shouldRespond) {
+      if (command) {
+        // Extract the command name and the prompt
+        const prompt = message.content.slice(command.index + command[0].length).trim();
         if (prompt) {
           await genimg(prompt, message);
         } else {
@@ -187,7 +185,6 @@ client.on('messageCreate', async (message) => {
         }
       } else if (activeRequests.has(message.author.id)) {
         await message.reply('> `Please wait until your previous action is complete.`');
-        return;
       } else if (message.attachments.size > 0 && hasImageAttachments(message)) {
         await handleImageMessage(message);
       } else if (message.attachments.size > 0 && hasTextFileAttachments(message)) {
@@ -206,130 +203,157 @@ async function alwaysRespond(interaction) {
   const userId = interaction.user.id;
   const channelId = interaction.channelId;
 
-  // Ensure the channel is initialized in activeUsersInChannels
+  if (interaction.channel.type === ChannelType.DM) {
+    await interaction.reply({ content: '> `This feature is disabled in DMs.`', ephemeral: true });
+    return;
+  }
+
   if (!activeUsersInChannels[channelId]) {
     activeUsersInChannels[channelId] = {};
   }
 
-  // Toggle the state for the current channel and user
   if (activeUsersInChannels[channelId][userId]) {
     delete activeUsersInChannels[channelId][userId];
-
-    // Send an ephemeral message to the user who interacted
     await interaction.reply({ content: '> Bot response to your messages is turned `OFF`.', ephemeral: true });
   } else {
     activeUsersInChannels[channelId][userId] = true;
-
-    // Send an ephemeral message to the user who interacted
     await interaction.reply({ content: '> Bot response to your messages is turned `ON`.', ephemeral: true });
   }
 }
 
 async function clearChatHistory(interaction) {
   chatHistories[interaction.user.id] = [];
-  // Send an ephemeral message to the user who interacted
   await interaction.reply({ content: '> `Chat history cleared!`', ephemeral: true });
 }
 
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isCommand()) return;
-  
-  if (interaction.commandName === 'respondtoall') {
-    if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-      return interaction.reply({ content: 'You need to be an admin to use this command.', ephemeral: true });
+client.on('interactionCreate', async (interaction) => {
+  try {
+    if (!interaction.isCommand()) return;
+    switch (interaction.commandName) {
+      case 'respondtoall':
+        await handleRespondToAllCommand(interaction);
+        break;
+      case 'imagine':
+        await handleImagineCommand(interaction);
+        break;
+      case 'clear':
+        await clearChatHistory(interaction);
+        break;
+      case 'speech':
+        await handleSpeechCommand(interaction);
+        break;
+      default:
+        console.log(`Unknown command: ${interaction.commandName}`);
+        break;
     }
-  
-    const channelId = interaction.channelId;
-  
-    // Toggle functionality
-    if (alwaysRespondChannels[channelId]) {
-      // It's currently on, so turn it off.
-      delete alwaysRespondChannels[channelId];
-      await interaction.reply({ content: '> **The bot will now stop** responding to all messages in this channel.', ephemeral: false });
-    } else {
-      // It's currently off, so turn it on.
-      alwaysRespondChannels[channelId] = true;
-      await interaction.reply({ content: '> **The bot will now respond** to all messages in this channel.', ephemeral: false });
-    }
-  } else if (interaction.commandName === 'imagine') {
-    const model = interaction.options.getString('model');
-    const prompt = interaction.options.getString('prompt');
-
-    await genimgslash(prompt, model, interaction);
-  } else if (interaction.commandName === 'clear') {
-    await clearChatHistory(interaction);
-  } else if (interaction.commandName === 'speech') {
-    const generatingMsg = await interaction.reply({ content: `${interaction.user}, generating your speech, please wait... 💽` });
-    try {
-      const userId = interaction.user.id;
-      const text = interaction.options.getString('prompt');
-      const language = interaction.options.getString('language');
-      const outputUrl = await generateSpeechWithPrompt(text, userId, language);
-      if (outputUrl && outputUrl !== 'Output URL is not available.') {
-        const file = new AttachmentBuilder(outputUrl).setName('speech.wav');
-        const embed = new EmbedBuilder()
-          .setColor(0x0099ff)
-          .setTitle('🎙️ **Speech Generated!**')
-          .setDescription(`Here Is Your Generated Speech:\n**Prompt:**\n\`\`\`${text}\`\`\``)
-          .addFields(
-            { name: '**Generated by**', value: `\`${interaction.user.displayName}\``, inline: true },
-            { name: '**Language Used:**', value: `\`${language}\``, inline: true }
-          )
-          .setTimestamp()
-
-        const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed],  files: [file] });
-        await addSettingsButton(messageReference);
-        await generatingMsg.delete();
-      } else {
-        const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
-        await addSettingsButton(messageReference);
-        await generatingMsg.delete();
-      }
-    } catch (error) {
-      console.log(error)
-      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
-      await addSettingsButton(messageReference);
-      await generatingMsg.delete();
-    }
+  } catch (error) {
+    console.error('Error handling command:', error.message);
   }
 });
 
-client.on('interactionCreate', async (interaction) => {
-  // Check if the interaction is a button click
-  if (interaction.isButton()) {
+async function handleRespondToAllCommand(interaction) {
+  if (interaction.channel.type === ChannelType.DM) {
+    return interaction.reply({ content: 'This command cannot be used in DMs.', ephemeral: true });
+  }
 
-    // Handle the interaction based on the customId of the button clicked
-    if (interaction.customId === 'settings') {
-      await showSettings(interaction);
-    } else if (interaction.customId === 'clear') {
-      await clearChatHistory(interaction);
-    } else if (interaction.customId === 'always-respond') {
-      await alwaysRespond(interaction);
-    } else if (interaction.customId === 'custom-personality') {
-      await setCustomPersonality(interaction);
-    } else if (interaction.customId === 'remove-personality') {
-      await removeCustomPersonality(interaction);
-    } else if (interaction.customId === 'generate-image') {
-      await handleGenerateImageButton(interaction);
-    } else if (interaction.customId === 'change-image-model') {
-      await changeImageModel(interaction);
-    } else if (interaction.customId.startsWith('select-image-model-')) {
-      const selectedModel = interaction.customId.replace('select-image-model-', '');
-      await handleImageSelectModel(interaction, selectedModel);
-    } else if (interaction.customId.startsWith('select-speech-model-')) {
-      const selectedModel = interaction.customId.replace('select-speech-model-', '');
-      await handleSpeechSelectModel(interaction, selectedModel);
-    } else if (interaction.customId === 'toggle-response-mode') {
-      await toggleUserPreference(interaction);
-    } else if (interaction.isButton() && interaction.customId === 'generate-speech') {
-      await processSpeechGet(interaction)
-    } else if (interaction.customId === 'change-speech-model') {
-      await changeSpeechModel(interaction);
-    } else if (interaction.customId === 'download-conversation') {
-      await downloadConversation(interaction);
+  if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+    return interaction.reply({ content: 'You need to be an admin to use this command.', ephemeral: true });
+  }
+
+  const channelId = interaction.channelId;
+  if (alwaysRespondChannels[channelId]) {
+    delete alwaysRespondChannels[channelId];
+    await interaction.reply({ content: '> **The bot will now stop** responding to all messages in this channel.', ephemeral: false });
+  } else {
+    alwaysRespondChannels[channelId] = true;
+    await interaction.reply({ content: '> **The bot will now respond** to all messages in this channel.', ephemeral: false });
+  }
+}
+
+async function handleImagineCommand(interaction) {
+  const model = interaction.options.getString('model');
+  const prompt = interaction.options.getString('prompt');
+  await genimgslash(prompt, model, interaction);
+}
+
+async function handleSpeechCommand(interaction) {
+  const generatingMsg = await interaction.reply({ content: `${interaction.user}, generating your speech, please wait... 💽` });
+  try {
+    const userId = interaction.user.id;
+    const text = interaction.options.getString('prompt');
+    const language = interaction.options.getString('language');
+    const outputUrl = await generateSpeechWithPrompt(text, userId, language);
+    if (outputUrl && outputUrl !== 'Output URL is not available.') {
+      await handleSuccessfulSpeechGeneration(interaction, text, language, outputUrl);
+      await generatingMsg.delete();
+    } else {
+      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong, or the output URL is not available.` });
+      await addSettingsButton(messageReference);
+      await generatingMsg.delete();
     }
-  } else if (interaction.isModalSubmit()) {
-    await handleModalSubmit(interaction);
+  } catch (error) {
+    console.log(error);
+    const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong and the output is not available.` });
+    await addSettingsButton(messageReference);
+    await generatingMsg.delete();
+  }
+}
+
+async function handleSuccessfulSpeechGeneration(interaction, text, language, outputUrl) {
+  const file = new AttachmentBuilder(outputUrl).setName('speech.wav');
+  const embed = new EmbedBuilder()
+    .setColor(0x0099ff)
+    .setTitle('🎙️ **Speech Generated!**')
+    .setDescription(`Here Is Your Generated Speech:\n**Prompt:**\n\`\`\`${text}\`\`\``)
+    .addFields(
+      { name: '**Generated by**', value: `\`${interaction.user.displayName}\``, inline: true },
+      { name: '**Language Used:**', value: `\`${language}\``, inline: true }
+    )
+    .setTimestamp();
+
+  const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed], files: [file] });
+  await addSettingsButton(messageReference);
+}
+
+client.on('interactionCreate', async (interaction) => {
+  try {
+    if (interaction.isButton()) {
+      if (interaction.customId === 'settings') {
+        await showSettings(interaction);
+      } else if (interaction.customId === 'clear') {
+        await clearChatHistory(interaction);
+      } else if (interaction.customId === 'always-respond') {
+        await alwaysRespond(interaction);
+      } else if (interaction.customId === 'custom-personality') {
+        await setCustomPersonality(interaction);
+      } else if (interaction.customId === 'remove-personality') {
+        await removeCustomPersonality(interaction);
+      } else if (interaction.customId === 'generate-image') {
+        await handleGenerateImageButton(interaction);
+      } else if (interaction.customId === 'change-image-model') {
+        await changeImageModel(interaction);
+      } else if (interaction.customId.startsWith('select-image-model-')) {
+        const selectedModel = interaction.customId.replace('select-image-model-', '');
+        await handleImageSelectModel(interaction, selectedModel);
+      } else if (interaction.customId.startsWith('select-speech-model-')) {
+        const selectedModel = interaction.customId.replace('select-speech-model-', '');
+        await handleSpeechSelectModel(interaction, selectedModel);
+      } else if (interaction.customId === 'toggle-response-mode') {
+        await toggleUserPreference(interaction);
+      } else if (interaction.isButton() && interaction.customId === 'generate-speech') {
+        await processSpeechGet(interaction)
+      } else if (interaction.customId === 'change-speech-model') {
+        await changeSpeechModel(interaction);
+      } else if (interaction.customId === 'download-conversation') {
+        await downloadConversation(interaction);
+      } else if (interaction.customId === 'download_message') {
+        await downloadMessage(interaction);
+      }
+    } else if (interaction.isModalSubmit()) {
+      await handleModalSubmit(interaction);
+    }
+  } catch (error) {
+    console.error('Error handling command:', error.message);
   }
 });
 
@@ -397,26 +421,7 @@ async function genimgslash(prompt, model, interaction) {
   userPreferredImageModel[interaction.user.id] = model;
   
   try {
-    const imageResult = await generateImageWithPrompt(prompt, interaction.user.id);
-    const imageUrl = imageResult.images[0].url;
-    const modelUsed = imageResult.modelUsed;
-    
-    const imageBuffer = await fetchImageAsBuffer(imageUrl);
-    const attachment = new AttachmentBuilder(imageBuffer, { name: 'generated-image.png' });
-    const embed = new EmbedBuilder()
-      .setColor(0x0099ff)
-      .setTitle('✨ **Image Generated!**')
-      .setDescription(`Here Is Your Generated Image:`)
-      .addFields(
-        { name: '**Prompt**', value: `\`\`\`${prompt}\`\`\``, inline: false },
-        { name: '**Generated by**', value: `\`${interaction.user.displayName}\``, inline: true },
-        { name: '**Model Used**', value: `\`${modelUsed}\``, inline: true },
-      )
-      .setImage('attachment://generated-image.png')
-      .setTimestamp()
-
-    const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed], files: [attachment]  });
-    await addSettingsButton(messageReference);
+    await generateAndSendImage(prompt, interaction);
     await generatingMsg.delete();
   } catch (error) {
     console.log(error);
@@ -426,6 +431,29 @@ async function genimgslash(prompt, model, interaction) {
   }
 }
 
+async function generateAndSendImage(prompt, interaction) {
+  const imageResult = await generateImageWithPrompt(prompt, interaction.user.id);
+  const imageUrl = imageResult.images[0].url;
+  const modelUsed = imageResult.modelUsed;
+
+  const imageBuffer = await fetchImageAsBuffer(imageUrl);
+  const attachment = new AttachmentBuilder(imageBuffer, { name: 'generated-image.png' });
+  const embed = new EmbedBuilder()
+    .setColor(0x0099ff)
+    .setTitle('✨ **Image Generated!**')
+    .setDescription(`Here Is Your Generated Image:`)
+    .addFields(
+      { name: '**Prompt**', value: `\`\`\`${prompt}\`\`\``, inline: false },
+      { name: '**Generated by**', value: `\`${interaction.user.displayName}\``, inline: true },
+      { name: '**Model Used**', value: `\`${modelUsed}\``, inline: true },
+    )
+    .setImage('attachment://generated-image.png')
+    .setTimestamp();
+
+  const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed], files: [attachment] });
+  await addSettingsButton(messageReference);
+}
+
 async function handleModalSubmit(interaction) {
   if (interaction.customId === 'custom-personality-modal') {
     const customInstructionsInput = interaction.fields.getTextInputValue('custom-personality-input');
@@ -433,7 +461,7 @@ async function handleModalSubmit(interaction) {
 
     await interaction.reply({ content: '> Custom personality instructions saved!' });
 
-    setTimeout(() => interaction.deleteReply(), 10000); // Delete after 10 seconds
+    setTimeout(() => interaction.deleteReply(), 5000); // Delete after 5 seconds
   } else if (interaction.customId === 'text-speech-modal') {
     const generatingMsg = await interaction.reply({ content: `${interaction.user}, generating your speech, please wait... 💽` });
     try {
@@ -441,18 +469,7 @@ async function handleModalSubmit(interaction) {
       const text = interaction.fields.getTextInputValue('text-speech-input');
       const outputUrl = await generateSpeechWithPrompt(text, userId, 'en');
       if (outputUrl && outputUrl !== 'Output URL is not available.') {
-        const file = new AttachmentBuilder(outputUrl).setName('speech.wav');
-        const embed = new EmbedBuilder()
-          .setColor(0x0099ff)
-          .setTitle('🎙️ **Speech Generated!**')
-          .setDescription(`Here Is Your Generated Speech:\n**Prompt:**\n\`\`\`${text}\`\`\``)
-          .addFields(
-            { name: '**Generated by**', value: `\`${interaction.user.displayName}\``, inline: true }
-          )
-          .setTimestamp()
-  
-        const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed],  files: [file] });
-        await addSettingsButton(messageReference);
+        await handleSuccessfulSpeechGeneration(interaction, text, "English", outputUrl);
         await generatingMsg.delete();
       } else {
         const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
@@ -460,7 +477,7 @@ async function handleModalSubmit(interaction) {
         await generatingMsg.delete();
       }
     } catch (error) {
-      console.log(error)
+      console.log(error);
       const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
       await addSettingsButton(messageReference);
       await generatingMsg.delete();
@@ -471,26 +488,7 @@ async function handleModalSubmit(interaction) {
     const generatingMsg = await interaction.reply({ content: `${interaction.user}, generating your image, please wait... 🖌️` });
 
     try {
-      const imageResult = await generateImageWithPrompt(prompt, interaction.user.id);
-      const imageUrl = imageResult.images[0].url;
-      const modelUsed = imageResult.modelUsed;
-      
-      const imageBuffer = await fetchImageAsBuffer(imageUrl);
-      const attachment = new AttachmentBuilder(imageBuffer, { name: 'generated-image.png' });
-      const embed = new EmbedBuilder()
-        .setColor(0x0099ff)
-        .setTitle('✨ **Image Generated!**')
-        .setDescription(`Here Is Your Generated Image:`)
-        .addFields(
-          { name: '**Prompt**', value: `\`\`\`${prompt}\`\`\``, inline: false },
-          { name: '**Generated by**', value: `\`${interaction.user.displayName}\``, inline: true },
-          { name: '**Model Used**', value: `\`${modelUsed}\``, inline: true },
-        )
-        .setImage('attachment://generated-image.png')
-        .setTimestamp()
-
-      const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed], files: [attachment]  });
-      await addSettingsButton(messageReference);
+      await generateAndSendImage(prompt, interaction);
       await generatingMsg.delete();
     } catch (error) {
       const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, could not generate the image. Please try again later.` });
@@ -521,111 +519,137 @@ async function setCustomPersonality(interaction) {
   await interaction.showModal(modal);
 }
 
+async function downloadMessage(interaction) {
+  const message = interaction.message;
+  let textContent = message.content;
+  if (!textContent && message.embeds.length > 0) {
+    textContent = message.embeds[0].description;
+  }
+
+  if (!textContent) {
+    await interaction.reply({ content: '> `The message is empty..?`', ephemeral: true });
+    return;
+  }
+
+  const filePath = path.resolve(__dirname, 'message_content.txt');
+  fs.writeFileSync(filePath, textContent);
+
+  const attachment = new AttachmentBuilder(filePath, { name: 'message_content.txt' });
+
+  // Check if the interaction is in DMs
+  if (interaction.channel.type === ChannelType.DM) {
+    // If in DMs, send the message directly in the current channel
+    await interaction.reply({ content: '> `Here is the content of the message:`', files: [attachment] });
+  } else {
+    // If not in DMs, try to DM the user first
+    try {
+      await interaction.user.send({ content: '> `Here is the content of the message:`', files: [attachment] });
+      // If DM is successful, confirm with the interaction
+      await interaction.reply({ content: '> `The message content has been sent to your DMs.`', ephemeral: true });
+    } catch (error) {
+      // If DM fails, send in the current channel
+      console.error(`Failed to send DM: ${error}`);
+      await interaction.reply({ content: '> `Here is the content of the message:`', files: [attachment], ephemeral: true });
+    }
+  }
+
+  // Cleanup: Remove the temporary file
+  fs.unlinkSync(filePath);
+}
+
 async function downloadConversation(interaction) {
   const userId = interaction.user.id;
   const conversationHistory = chatHistories[userId];
 
-  // Check if there's a conversation history for the user
   if (!conversationHistory || conversationHistory.length === 0) {
-    await interaction.reply({ content: '> No conversation history found.', ephemeral: true });
+    await interaction.reply({ content: '> `No conversation history found.`', ephemeral: true });
     return;
   }
 
-  // Format the conversation history
   let conversationText = '';
   for (let i = 0; i < conversationHistory.length; i++) {
     const speaker = i % 2 === 0 ? '[User]' : '[Model]';
     conversationText += `${speaker}:\n${conversationHistory[i]}\n\n`;
   }
 
-  // Create a temporary file to hold the conversation text
   const tempFileName = path.join(__dirname, `${userId}_conversation.txt`);
   fs.writeFileSync(tempFileName, conversationText, 'utf8');
 
-  // Create an attachment from the temporary file
   const file = new AttachmentBuilder(tempFileName, { name: 'conversation_history.txt' });
 
-  // Reply with the file
-  await interaction.reply({ content: '> Here\'s your conversation history:', files: [file], ephemeral: true }).then(() => {
-    // Cleanup: Remove the temporary file after sending it
-    fs.unlinkSync(tempFileName);
-  }).catch(console.error);
+  // Check if the interaction is in DMs
+  if (interaction.channel.type === ChannelType.DM) {
+    // If in DMs, send the file directly in the current channel
+    await interaction.reply({ content: '> `Here\'s your conversation history:`', files: [file] });
+  } else {
+    try {
+      // Attempt to send the file as a DM
+      await interaction.user.send({ content: '> `Here\'s your conversation history:`', files: [file] });
+      await interaction.reply({ content: '> `Your conversation history has been sent to your DMs.`', ephemeral: true });
+    } catch (error) {
+      console.error(`Failed to send DM: ${error}`);
+      await interaction.reply({ content: '> `Here\'s your conversation history:`', files: [file], ephemeral: true });
+    }
+  }
+
+  fs.unlinkSync(tempFileName);
 }
 
 async function showSettings(interaction) {
-  const clearButton = new ButtonBuilder()
-    .setCustomId('clear')
-    .setLabel('Clear Memory')
-    .setEmoji('🧹')
-    .setStyle(ButtonStyle.Danger);
+  // Define button configurations in an array
+  const buttonConfigs = [
+    { customId: 'clear', label: 'Clear Memory', emoji: '🧹', style: ButtonStyle.Danger },
+    { customId: 'custom-personality', label: 'Custom Personality', emoji: '🙌', style: ButtonStyle.Primary },
+    { customId: 'remove-personality', label: 'Remove Personality', emoji: '🤖', style: ButtonStyle.Danger },
+    { customId: 'generate-image', label: 'Generate Image', emoji: '🎨', style: ButtonStyle.Primary },
+    { customId: 'change-image-model', label: 'Change Image Model', emoji: '👨‍🎨', style: ButtonStyle.Secondary },
+    { customId: 'generate-speech', label: 'Generate Speech', emoji: '🎤', style: ButtonStyle.Primary },
+    { customId: 'change-speech-model', label: 'Change Speech Model', emoji: '🔈', style: ButtonStyle.Secondary },
+    { customId: 'always-respond', label: 'Always Respond', emoji: '↩️', style: ButtonStyle.Secondary },
+    { customId: 'toggle-response-mode', label: 'Toggle Response Mode', emoji: '📝', style: ButtonStyle.Primary },
+    { customId: 'download-conversation', label: 'Download Conversation', emoji: '🗃️', style: ButtonStyle.Secondary },
+  ];
 
-  const toggleChatButton = new ButtonBuilder()
-    .setCustomId('always-respond')
-    .setLabel('Always Respond')
-    .setEmoji('↩️')
-    .setStyle(ButtonStyle.Secondary);
+  // Generate buttons from configurations
+  const allButtons = buttonConfigs.map(config => new ButtonBuilder()
+    .setCustomId(config.customId)
+    .setLabel(config.label)
+    .setEmoji(config.emoji)
+    .setStyle(config.style)
+  );
 
-  const customPersonalityButton = new ButtonBuilder()
-    .setCustomId('custom-personality')
-    .setLabel('Custom Personality')
-    .setEmoji('🙌')
-    .setStyle(ButtonStyle.Primary);
-
-  const removePersonalityButton = new ButtonBuilder()
-    .setCustomId('remove-personality')
-    .setLabel('Remove Personality')
-    .setEmoji('🤖')
-    .setStyle(ButtonStyle.Danger);
-
-  const generateImageButton = new ButtonBuilder()
-    .setCustomId('generate-image')
-    .setLabel('Generate Image')
-    .setEmoji('🎨')
-    .setStyle(ButtonStyle.Primary);
-
-  const imageToggleButton = new ButtonBuilder()
-    .setCustomId('change-image-model')
-    .setLabel('Change Image Model')
-    .setEmoji('👨‍🎨')
-    .setStyle(ButtonStyle.Secondary);
-    
-  const userResponseToggle = new ButtonBuilder()
-    .setCustomId('toggle-response-mode')
-    .setLabel('Toggle Response Mode')
-    .setEmoji('📝')
-    .setStyle(ButtonStyle.Primary);
-    
-  const generateAudioButton = new ButtonBuilder()
-    .setCustomId('generate-speech')
-    .setLabel('Generate Speech')
-    .setEmoji('🎤')
-    .setStyle(ButtonStyle.Primary);
-    
-  const speechToggleButton = new ButtonBuilder()
-    .setCustomId('change-speech-model')
-    .setLabel('Change Speech Model')
-    .setEmoji('🔈')
-    .setStyle(ButtonStyle.Secondary);
-    
-  const downloadConversation = new ButtonBuilder()
-    .setCustomId('download-conversation')
-    .setLabel('Download Conversation')
-    .setEmoji('🗃️')
-    .setStyle(ButtonStyle.Secondary);
-
-  // Split settings into multiple action rows if there are more than 5 buttons
+  // Split buttons into action rows
   const actionRows = [];
-  const allButtons = [clearButton, toggleChatButton, customPersonalityButton, removePersonalityButton, generateImageButton, imageToggleButton, userResponseToggle, generateAudioButton, speechToggleButton, downloadConversation];
-
   while (allButtons.length > 0) {
-    const actionRow = new ActionRowBuilder().addComponents(allButtons.splice(0, 5));
-    actionRows.push(actionRow);
+    actionRows.push(new ActionRowBuilder().addComponents(allButtons.splice(0, 5)));
   }
 
+  // Reply to the interaction
   await interaction.reply({
-    content: '> ```Settings:```',
+    content: `> **This Message Will Get Deleted In 30 Seconds**\n> \`\`\`Settings:\`\`\``,
     components: actionRows
   });
+  setTimeout(() => interaction.deleteReply().catch(console.error), 30000);
+}
+
+async function retryOperation(fn, maxRetries, delayMs = 1000) {
+  let error;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      console.log(`Attempt ${attempt} failed`);
+      error = err;
+      if (attempt < maxRetries) {
+        console.log(`Waiting ${delayMs}ms before next attempt...`);
+        await delay(delayMs);
+      } else {
+        console.log(`All ${maxRetries} Attempts failed`);
+      }
+    }
+  }
+  throw new Error(`Error.`);
 }
 
 async function processSpeechGet(interaction) {
@@ -645,56 +669,61 @@ async function processSpeechGet(interaction) {
   await interaction.showModal(modal);
 }
 
-async function speechGen2(prompt) {
+async function speechGen(prompt) {
   const sessionHash = "test123";
-  const joinQueueUrl = `https://styletts2-styletts2.hf.space/queue/join?fn_index=1&session_hash=${sessionHash}`;
-  const response = new EventSource(joinQueueUrl);
+  const urlFirstRequest = 'https://mrfakename-melotts.hf.space/queue/join?';
+  const dataFirstRequest = {
+    data: ["EN-US", prompt, 1, "EN"],
+    event_data: null,
+    fn_index: 1,
+    trigger_id: 8,
+    session_hash: sessionHash
+  };
 
+  try {
+    const responseFirst = await axios.post(urlFirstRequest, dataFirstRequest);
+    console.log(responseFirst.data);
+  } catch (error) {
+    console.error("Error in the first request:", error);
+    return null;
+  }
+
+  const urlSecondRequest = `https://mrfakename-melotts.hf.space/queue/data?session_hash=${sessionHash}`;
   return new Promise((resolve, reject) => {
-    response.onmessage = async (event) => {
-      const data = JSON.parse(event.data);
+    axios.get(urlSecondRequest, {
+      responseType: 'stream'
+    }).then(responseSecond => {
+      let fullData = '';
 
-      if (data.msg === "send_data") {
-        const eventId = data.event_id;
-        console.log("Event ID:", eventId);
-        // Send data
-        const urlSecondRequest = 'https://styletts2-styletts2.hf.space/queue/data';
-        const data2request = {
-          "data": [prompt, "m-us-2", 5],
-          "event_data": null,
-          "fn_index": 1,
-          "trigger_id": 8,
-          "session_hash": sessionHash,
-          "event_id": eventId
-        };
-        try {
-          const response = await axios.post(urlSecondRequest, data2request);
-        } catch (error) {
-          console.error("Error sending data:", error.message);
-          reject(error);
-        }
-      } else if (data.msg === "process_completed") {
-        response.close(); // Stop listening for events
-        const imagePath = data.output.data[0].path;
-        if (imagePath !== "Path not found") {
-          const fullUrl = `https://styletts2-styletts2.hf.space/--replicas/w0t4o/file=${imagePath}`;
-          console.log(fullUrl);
-          resolve(fullUrl);
-        } else {
-          reject(new Error("Path not found"));
-        }
-      }
-    };
+      responseSecond.data.on('data', (chunk) => {
+        fullData += chunk.toString();
 
-    response.onerror = (error) => {
-      console.error("EventSource failed:", error);
-      response.close();
+        if (fullData.includes('"msg": "process_completed"')) {
+          const lines = fullData.split('\n');
+          for (const line of lines) {
+            if (line.includes('"msg": "process_completed"')) {
+              try {
+                const dataDict = JSON.parse(line.slice(line.indexOf('{')));
+                const fullUrl = dataDict.output.data[0].url;
+                console.log(fullUrl);
+                resolve(fullUrl);
+                break;
+              } catch (parseError) {
+                console.error("Parsing error:", parseError);
+                reject(parseError);
+              }
+            }
+          }
+        }
+      });
+    }).catch(error => {
+      console.error("Error in second request event stream:", error);
       reject(error);
-    };
+    });
   });
 }
 
-async function speechGen3(text, language) {
+async function speechGen2(text, language) {
   try {
     const url = 'https://replicate.com/api/predictions';
     const payload = {
@@ -712,8 +741,6 @@ async function speechGen3(text, language) {
     const headers = {
       'Content-Type': 'application/json'
     };
-    
-    // Start the prediction
     const response = await axios.post(url, payload, { headers });
     const predictionId = response.data.id;
 
@@ -725,7 +752,6 @@ async function speechGen3(text, language) {
         outputUrl = data.output ? data.output : 'Output URL is not available.';
         break;
       }
-      // Wait for 1 second before making another status check.
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
@@ -737,24 +763,27 @@ async function speechGen3(text, language) {
 }
 
 async function changeSpeechModel(interaction) {
-  // Create buttons for each model
-  const buttons = [
-    new ButtonBuilder().setCustomId('select-speech-model-1').setLabel('1').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('select-speech-model-2').setLabel('2').setStyle(ButtonStyle.Primary)
-  ];
+  // Define model numbers in an array
+  const modelNumbers = ['1', '2'];
 
-  // Split buttons into multiple ActionRows if there are more than 5 buttons
+  // Generate buttons using map()
+  const buttons = modelNumbers.map(number =>
+    new ButtonBuilder()
+    .setCustomId(`select-speech-model-${number}`)
+    .setLabel(number)
+    .setStyle(ButtonStyle.Primary)
+  );
+
   const actionRows = [];
-  while (buttons.length > 0) {
-    const actionRow = new ActionRowBuilder().addComponents(buttons.splice(0, 5));
+  for (let i = 0; i < buttons.length; i += 5) {
+    const actionRow = new ActionRowBuilder().addComponents(buttons.slice(i, i + 5));
     actionRows.push(actionRow);
   }
 
-  // Reply with the message prompting user to select an image generation model
   await interaction.reply({
     content: '> `Select Speech Generation Model:`',
     components: actionRows,
-    ephemeral: true,
+    ephemeral: true
   });
 }
 
@@ -764,45 +793,52 @@ async function handleSpeechSelectModel(interaction, model) {
   await interaction.reply({ content: `**Speech Generation Model Selected**: ${model}`, ephemeral: true });
 }
 
+const speechModelFunctions = {
+  "1": speechGen,
+  "2": speechGen2
+};
+
 async function generateSpeechWithPrompt(prompt, userId, language) {
   try {
     const selectedModel = userPreferredSpeechModel[userId] || "1";
+    const generateFunction = speechModelFunctions[selectedModel];
 
-    if (selectedModel === "1") {
-      return await speechGen(prompt);
-    } else if (selectedModel === "2") {
-      return await speechGen2(prompt);
+    if (!generateFunction) {
+      throw new Error(`Unsupported speech model: ${selectedModel}`);
     }
+    return await retryOperation(() => generateFunction(prompt, language), 3);
   } catch (error) {
-    console.error('Error generating image:', error);
-    throw new Error('Could not generate image');
+    console.error('Error generating speech:', error);
+    throw new Error('Could not generate speech after retries');
   }
 }
 
 async function changeImageModel(interaction) {
-  // Create buttons for each model
-  const buttons = [
-    new ButtonBuilder().setCustomId('select-image-model-SD-XL').setLabel('SD-XL').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('select-image-model-SD-XL-Alt').setLabel('SD-XL-Alt').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('select-image-model-Stable-Cascade').setLabel('Stable-Cascade').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('select-image-model-PlaygroundAI').setLabel('PlaygroundAI').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('select-image-model-PlaygroundAI-Alt').setLabel('PlaygroundAI-Alt').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('select-image-model-Kandinsky').setLabel('Kandinsky').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId('select-image-model-Proteus-v0.4').setLabel('Proteus-v0.4').setStyle(ButtonStyle.Primary),
+  // Define model names in an array
+  const models = [
+    'SD-XL', 'SD-XL-Alt', 'SD-XL-Alt2', 'Stable-Cascade', 'PlaygroundAI',
+    'PlaygroundAI-Alt', 'Kandinsky', 'Proteus-v0.4'
   ];
 
-  // Split buttons into multiple ActionRows if there are more than 5 buttons
+  // Generate buttons using map()
+  const buttons = models.map(model =>
+    new ButtonBuilder()
+    .setCustomId(`select-image-model-${model}`)
+    .setLabel(model)
+    .setStyle(ButtonStyle.Primary)
+  );
+
+  // Create action rows by batching the buttons into groups of 5
   const actionRows = [];
-  while (buttons.length > 0) {
-    const actionRow = new ActionRowBuilder().addComponents(buttons.splice(0, 5));
+  for (let i = 0; i < buttons.length; i += 5) {
+    const actionRow = new ActionRowBuilder().addComponents(buttons.slice(i, i + 5));
     actionRows.push(actionRow);
   }
 
-  // Reply with the message prompting user to select an image generation model
   await interaction.reply({
     content: '> `Select Image Generation Model:`',
     components: actionRows,
-    ephemeral: true,
+    ephemeral: true
   });
 }
 
@@ -812,28 +848,29 @@ async function handleImageSelectModel(interaction, model) {
   await interaction.reply({ content: `**Image Generation Model Selected**: ${model}`, ephemeral: true });
 }
 
+const imageModelFunctions = {
+  "Stable-Cascade": generateWithSC,
+  "SD-XL": generateWithSDXL,
+  "SD-XL-Alt": generateWithSDXLAlt,
+  "SD-XL-Alt2": generateWithSDXLAlt2,
+  "Kandinsky": generateWithKandinsky,
+  "PlaygroundAI": generateWithPlaygroundAI,
+  "PlaygroundAI-Alt": generateWithPlaygroundAIAlt,
+  "Proteus-v0.4": generateWithProteus4
+};
+
 async function generateImageWithPrompt(prompt, userId) {
   try {
     const selectedModel = userPreferredImageModel[userId] || "SD-XL";
+    const generateFunction = imageModelFunctions[selectedModel];
 
-    if (selectedModel === "Stable-Cascade") {
-      return await generateWithSC(prompt);
-    } else if (selectedModel === "SD-XL") {
-      return await generateWithSDXL(prompt);
-    } else if (selectedModel === "SD-XL-Alt") {
-      return await generateWithSDXLAlt(prompt);
-    } else if (selectedModel === "Kandinsky") {
-      return await generateWithKandinsky(prompt);
-    } else if (selectedModel === "PlaygroundAI") {
-      return await generateWithPlaygroundAI(prompt);
-    } else if (selectedModel === "PlaygroundAI-Alt") {
-      return await generateWithPlaygroundAIAlt(prompt);
-    } else if (selectedModel === "Proteus-v0.4") {
-      return await generateWithProteus4(prompt);
+    if (!generateFunction) {
+      throw new Error(`Unsupported model: ${selectedModel}`);
     }
+    return await retryOperation(() => generateFunction(prompt), 3);
   } catch (error) {
     console.error('Error generating image:', error);
-    throw new Error('Could not generate image');
+    throw new Error('Could not generate image after retries');
   }
 }
 
@@ -841,11 +878,9 @@ function generateWithSC(prompt) {
   return new Promise((resolve, reject) => {
     const url = "https://ehristoforu-stable-cascade.hf.space";
     let session_hash = 'test123';
-
-    // Define the first request URL and data
     const urlFirstRequest = `${url}/queue/join?`;
     const dataFirstRequest = {
-      "data": [prompt, "nsfw, bad quality, bad anatomy, worst quality, low quality, low resolutions, extra fingers, blur, blurry, ugly, wrongs proportions, watermark, image artifacts, lowres, ugly, jpeg artifacts, deformed, noisy image", 1024, 1024, false],
+      "data": [prompt, "nsfw, very low quality, bad anatomy, extra fingers, blurry, ugly, wrong proportions, watermarks, image artifacts, jpeg noise, deformed, noisy, oversaturated, grainy, mutated, missing limb, floating limbs, out of focus, long neck, disgusting, childish, mutilated, old, surreal, signs or text, body parts out of frame, extra limbs, poorly executed details.", 1024, 1024, false],
       "event_data": null,
       "fn_index": 0,
       "trigger_id": 4,
@@ -871,17 +906,12 @@ function generateWithSC(prompt) {
           resolve({ images: [{ url: full_url }], modelUsed: "Stable Cascade" });
         }
       };
-
-      // In case of an error with EventSource, you may also want to reject the promise
       eventSource.onerror = (error) => {
         eventSource.close();
-        console.error("EventSource Error:", error);
         reject(error);
       };
-
     }).catch(error => {
-      console.error("Error:", error);
-      reject(error); // Reject the promise if the first request fails
+      reject(error);
     });
   });
 }
@@ -898,7 +928,7 @@ function generateWithPlaygroundAI(prompt) {
         "num_outputs": 1,
         "guidance_scale": 6,
         "apply_watermark": true,
-        "negative_prompt": "nsfw, bad quality, bad anatomy, worst quality, low quality, low resolutions, extra fingers, blur, blurry, ugly, wrongs proportions, watermark, image artifacts, lowres, ugly, jpeg artifacts, deformed, noisy image",
+        "negative_prompt": "nsfw, very low quality, bad anatomy, extra fingers, blurry, ugly, wrong proportions, watermarks, image artifacts, jpeg noise, deformed, noisy, oversaturated, grainy, mutated, missing limb, floating limbs, out of focus, long neck, disgusting, childish, mutilated, old, surreal, signs or text, body parts out of frame, extra limbs, poorly executed details.",
         "prompt_strength": 0.8,
         "num_inference_steps": 50
       },
@@ -916,8 +946,6 @@ function generateWithPlaygroundAI(prompt) {
       .then(response => {
         const predictionId = response.data.id;
         const urlWithId = `https://replicate.com/api/predictions/${predictionId}`;
-
-        // Polling for the prediction result
         const checkPrediction = () => {
           axios.get(urlWithId)
             .then(res => {
@@ -934,14 +962,12 @@ function generateWithPlaygroundAI(prompt) {
               }
             })
             .catch(error => {
-              console.error("Error:", error);
               reject(error);
             });
         };
         checkPrediction();
       })
       .catch(error => {
-        console.error("Error:", error);
         reject(error);
       });
   });
@@ -951,8 +977,6 @@ function generateWithPlaygroundAIAlt(prompt) {
   return new Promise((resolve, reject) => {
     const url = "https://ap123-playground-v2-5.hf.space";
     let session_hash = 'test123';
-
-    // Define the first request URL and data
     const urlFirstRequest = `${url}/queue/join?`;
     const dataFirstRequest = {
       "data": [prompt, 50, 6],
@@ -980,17 +1004,12 @@ function generateWithPlaygroundAIAlt(prompt) {
           resolve({ images: [{ url: full_url }], modelUsed: "PlaygroundAI-Alt" });
         }
       };
-
-      // In case of an error with EventSource, you may also want to reject the promise
       eventSource.onerror = (error) => {
         eventSource.close();
-        console.error("EventSource Error:", error);
         reject(error);
       };
-
     }).catch(error => {
-      console.error("Error:", error);
-      reject(error); // Reject the promise if the first request fails
+      reject(error);
     });
   });
 }
@@ -1007,7 +1026,7 @@ function generateWithProteus4(prompt) {
         "num_outputs": 1,
         "guidance_scale": 6,
         "apply_watermark": true,
-        "negative_prompt": "nsfw, bad quality, bad anatomy, worst quality, low quality, low resolutions, extra fingers, blur, blurry, ugly, wrongs proportions, watermark, image artifacts, lowres, ugly, jpeg artifacts, deformed, noisy image",
+        "negative_prompt": "nsfw, very low quality, bad anatomy, extra fingers, blurry, ugly, wrong proportions, watermarks, image artifacts, jpeg noise, deformed, noisy, oversaturated, grainy, mutated, missing limb, floating limbs, out of focus, long neck, disgusting, childish, mutilated, old, surreal, signs or text, body parts out of frame, extra limbs, poorly executed details.",
         "prompt_strength": 0.8,
         "num_inference_steps": 50
       },
@@ -1026,7 +1045,6 @@ function generateWithProteus4(prompt) {
         const predictionId = response.data.id;
         const urlWithId = `https://replicate.com/api/predictions/${predictionId}`;
 
-        // Polling for the prediction result
         const checkPrediction = () => {
           axios.get(urlWithId)
             .then(res => {
@@ -1043,14 +1061,12 @@ function generateWithProteus4(prompt) {
               }
             })
             .catch(error => {
-              console.error("Error:", error);
               reject(error);
             });
         };
         checkPrediction();
       })
       .catch(error => {
-        console.error("Error:", error);
         reject(error);
       });
   });
@@ -1067,7 +1083,7 @@ function generateWithSDXL(prompt) {
         "scheduler": "K_EULER",
         "num_outputs": 1,
         "guidance_scale": 0,
-        "negative_prompt": "nsfw, bad quality, bad anatomy, worst quality, low quality, low resolutions, extra fingers, blur, blurry, ugly, wrongs proportions, watermark, image artifacts, lowres, ugly, jpeg artifacts, deformed, noisy image",
+        "negative_prompt": "nsfw, very low quality, bad anatomy, extra fingers, blurry, ugly, wrong proportions, watermarks, image artifacts, jpeg noise, deformed, noisy, oversaturated, grainy, mutated, missing limb, floating limbs, out of focus, long neck, disgusting, childish, mutilated, old, surreal, signs or text, body parts out of frame, extra limbs, poorly executed details.",
         "num_inference_steps": 6,
       },
       "is_training": false,
@@ -1102,14 +1118,12 @@ function generateWithSDXL(prompt) {
               }
             })
             .catch(error => {
-              console.error("Error:", error);
               reject(error);
             });
         };
         checkPrediction();
       })
       .catch(error => {
-        console.error("Error:", error);
         reject(error);
       });
   });
@@ -1119,8 +1133,6 @@ function generateWithSDXLAlt(prompt) {
   return new Promise((resolve, reject) => {
     const url = "https://ap123-sdxl-lightning.hf.space";
     let session_hash = 'test123';
-
-    // Define the first request URL and data
     const urlFirstRequest = `${url}/queue/join?`;
     const dataFirstRequest = {
       "data": [prompt, "8-Step"],
@@ -1148,17 +1160,53 @@ function generateWithSDXLAlt(prompt) {
           resolve({ images: [{ url: full_url }], modelUsed: "SD-XL-Alt" });
         }
       };
-
-      // In case of an error with EventSource, you may also want to reject the promise
       eventSource.onerror = (error) => {
         eventSource.close();
-        console.error("EventSource Error:", error);
         reject(error);
       };
-
     }).catch(error => {
-      console.error("Error:", error);
-      reject(error); // Reject the promise if the first request fails
+      reject(error);
+    });
+  });
+}
+
+function generateWithSDXLAlt2(prompt) {
+  return new Promise((resolve, reject) => {
+    const url = "https://h1t-tcd.hf.space";
+    let session_hash = 'test123';
+    const urlFirstRequest = `${url}/queue/join?`;
+    const dataFirstRequest = {
+      "data": [prompt, 10, -1, 0.5],
+      "event_data": null,
+      "fn_index": 2,
+      "trigger_id": 17,
+      "session_hash": session_hash
+    };
+
+    axios.post(urlFirstRequest, dataFirstRequest).then(responseFirst => {
+      console.log(responseFirst.data);
+
+      const urlSecondRequest = `${url}/queue/data?session_hash=${session_hash}`;
+
+      const eventSource = new EventSource(urlSecondRequest);
+
+      eventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.msg === "process_completed") {
+          eventSource.close();
+          const full_url = data["output"]["data"][0]["url"];
+          console.log(full_url);
+
+          resolve({ images: [{ url: full_url }], modelUsed: "SD-XL-Alt2" });
+        }
+      };
+      eventSource.onerror = (error) => {
+        eventSource.close();
+        reject(error);
+      };
+    }).catch(error => {
+      reject(error);
     });
   });
 }
@@ -1167,8 +1215,6 @@ function generateWithKandinsky(prompt) {
   return new Promise((resolve, reject) => {
     const url = "https://ehristoforu-kandinsky-api.hf.space";
     let session_hash = 'test123';
-
-    // Define the first request URL and data
     const urlFirstRequest = `${url}/queue/join?`;
     const dataFirstRequest = {
       "data": [prompt, 1024, 1024],
@@ -1196,17 +1242,12 @@ function generateWithKandinsky(prompt) {
           resolve({ images: [{ url: full_url }], modelUsed: "Kandinsky" });
         }
       };
-
-      // In case of an error with EventSource, you may also want to reject the promise
       eventSource.onerror = (error) => {
         eventSource.close();
-        console.error("EventSource Error:", error);
         reject(error);
       };
-
     }).catch(error => {
-      console.error("Error:", error);
-      reject(error); // Reject the promise if the first request fails
+      reject(error);
     });
   });
 }
@@ -1225,12 +1266,12 @@ async function handleImageMessage(message) {
         const response = await fetch(attachment.url);
         const buffer = await response.buffer();
 
-        if (buffer.length > 4 * 1024 * 1024) {
+        if (buffer.length > 3 * 1024 * 1024) {
           try {
 
             const compressedBuffer = await compressImage(buffer);
 
-            if (compressedBuffer.length > 4 * 1024 * 1024) {
+            if (compressedBuffer.length > 3.9 * 1024 * 1024) {
               throw new Error('Image too large after compression.');
             }
 
@@ -1424,11 +1465,11 @@ async function handleUrlsInMessage(urls, messageContent, botMessage, originalMes
         const videoId = extractYouTubeVideoId(url);
         const transcriptData = await YoutubeTranscript.fetchTranscript(videoId);
         const transcriptText = transcriptData.map(item => item.text).join(' ');
-        contentWithUrls += `\n\n[Transcript Of Video Number ${contentIndex}]:\n"${transcriptText}"`;
+        contentWithUrls += `\n\n[Transcript Of Video ${url}]:\n"${transcriptText}"`;
       } else {
         // For non-video URLs, attempt to scrape webpage content
         const webpageContent = await scrapeWebpageContent(url);
-        contentWithUrls += `\n\n[Content of URL Number ${contentIndex}]:\n"${webpageContent}"`;
+        contentWithUrls += `\n\n[Text Inside The Website ${url}]:\n"${webpageContent}"`;
         console.log(webpageContent)
       }
       // In both cases, replace the URL with a reference in the text
@@ -1468,60 +1509,91 @@ async function toggleUserPreference(interaction) {
   await interaction.reply({ content: `> **Your responses has been switched from \`${currentPreference}\` to \`${updatedPreference}\`.**`, ephemeral: true });
 }
 
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function handleModelResponse(botMessage, responseFunc, originalMessage) {
   const userId = originalMessage.author.id;
+  const userPreference = getUserPreference(userId);
+  const maxCharacterLimit = userPreference === 'embedded' ? 3900 : 1900;
+  let attempts = 3;
 
-  try {
-    const messageResult = await responseFunc();
-    let finalResponse = '';
-    let isLargeResponse = false;
-    let maxCharacterLimit;
-    if (getUserPreference(userId) === 'embedded') {
-      maxCharacterLimit = 3900;
+  let updateTimeout;
+  let tempResponse = '';
+
+  const updateMessage = async () => {
+    if (userPreference === 'embedded') {
+      await updateEmbed(botMessage, finalResponse, originalMessage.author.displayName);
     } else {
-      maxCharacterLimit = 1900;
+      await botMessage.edit(tempResponse);
     }
+    clearTimeout(updateTimeout);
+    updateTimeout = null;
+  };
 
-    for await (const chunk of messageResult.stream) {
-      const chunkText = await chunk.text();
-      finalResponse += chunkText;
+  while (attempts > 0) {
+    try {
+      const messageResult = await responseFunc();
+      let finalResponse = '';
+      let isLargeResponse = false;
 
-      if (!isLargeResponse && finalResponse.length > maxCharacterLimit) {
-        await botMessage.edit('> `The response is too large and will be sent as a text file once it is ready.`');
-        isLargeResponse = true;
-      } else if (!isLargeResponse) {
-        // Check user preference
-        if (getUserPreference(userId) === 'embedded') {
-          const embed = new EmbedBuilder()
-            .setColor(0x505050)
-            .setTitle('📝 **Response:**')
-            .setDescription(finalResponse)
-            .addFields(
-              { name: '❓ **Questioned by:**', value: `${originalMessage.author.displayName}`, inline: false }
-            )
-            .setTimestamp();
+      for await (const chunk of messageResult.stream) {
+        const chunkText = await chunk.text();
+        finalResponse += chunkText;
 
-          await botMessage.edit({ content: null, embeds: [embed] });
-        } else {
-          await botMessage.edit(finalResponse);
+        if (finalResponse.length > maxCharacterLimit) {
+          if (!isLargeResponse) {
+            isLargeResponse = true;
+            await botMessage.edit('> `The response is too large and will be sent as a text file once it is ready.`');
+          }
+        } else if (!updateTimeout) {
+          updateTimeout = setTimeout(updateMessage, 500);
         }
       }
-    }
 
-    if (isLargeResponse) {
-      await sendAsTextFile(finalResponse, originalMessage);
-    } else {
-      await addSettingsButton(botMessage);
-    }
+      if (updateTimeout) {
+        await updateMessage();
+      }
 
-    updateChatHistory(userId, originalMessage.content.replace(new RegExp(`<@!?${client.user.id}>`), '').trim(), finalResponse);
-  } catch (error) {
-    console.error('Error handling model response:', error);
-    await botMessage.edit({ content: '> `Sorry, an error occurred while generating a response.`' });
-    await addSettingsButton(botMessage);
-  } finally {
-    activeRequests.delete(userId);
+      if (isLargeResponse) {
+        await sendAsTextFile(finalResponse, originalMessage);
+      } else {
+        await addDownloadButton(botMessage);
+      }
+
+      updateChatHistory(userId, originalMessage.content.replace(new RegExp(`<@!?${client.user.id}>`), '').trim(), finalResponse);
+      break;
+    } catch (error) {
+      console.error(error.message);
+      attempts--;
+
+      // Handle error scenarios
+      if (attempts === 0) {
+        const errormsg = await originalMessage.reply({ content: `All Generation Attempts Failed :( \`\`\`${error.message}\`\`\`` });
+        await addSettingsButton(errormsg);
+        await addSettingsButton(botMessage);
+      } else {
+        const errormsg = await originalMessage.reply({ content: `Generation Attempts Failed, Retrying.. \`\`\`${error.message}\`\`\`` });
+        setTimeout(() => errormsg.delete().catch(console.error), 5000);
+        await delay(500);
+      }
+    }
   }
+  activeRequests.delete(userId);
+}
+
+async function updateEmbed(botMessage, finalResponse, authorDisplayName) {
+  const embed = new EmbedBuilder()
+    .setColor(0x505050)
+    .setTitle('📝 **Response:**')
+    .setDescription(finalResponse)
+    .addFields(
+      { name: '❓ **Questioned by:**', value: `${authorDisplayName}`, inline: false }
+    )
+    .setTimestamp();
+
+  await botMessage.edit({ content: null, embeds: [embed] });
 }
 
 async function sendAsTextFile(text, message) {
@@ -1579,6 +1651,23 @@ function updateChatHistory(userId, userMessage, modelResponse) {
   }
   chatHistories[userId].push(userMessage);
   chatHistories[userId].push(modelResponse);
+}
+
+async function addDownloadButton(botMessage) {
+
+  const settingsButton = new ButtonBuilder()
+    .setCustomId('settings')
+    .setEmoji('⚙️')
+    .setStyle(ButtonStyle.Secondary);
+
+  const downloadButton = new ButtonBuilder()
+    .setCustomId('download_message')
+    .setLabel('Save')
+    .setEmoji('⬇️')
+    .setStyle(ButtonStyle.Secondary);
+
+  const actionRow = new ActionRowBuilder().addComponents(settingsButton, downloadButton);
+  await botMessage.edit({ components: [actionRow] });
 }
 
 async function addSettingsButton(botMessage) {
