@@ -18,7 +18,20 @@
   "homepage": "https://github.com/NICK-FURY-6023/gemini-ai#readme",
   "dependencies": {
     "@google/generative-ai": "^0.6.0",
+    "@types/node": "^18.0.6",
+    "axios": "^1.6.8",
+    "cheerio": "^1.0.0-rc.12",
+    "crypto": "^1.0.1",
     "discord.js": "^14.14.1",
-    "mongodb": "^6.5.0"
+    "dotenv": "^16.4.5",
+    "eventsource": "^2.0.2",
+    "fs": "^0.0.1-security",
+    "install": "^0.13.0",
+    "node-fetch": "^2.6.1",
+    "npm": "^10.5.2",
+    "pdf-parse": "^1.1.1",
+    "sharp": "^0.33.3",
+    "ws": "^8.16.0",
+    "youtube-transcript": "^1.1.0"
   }
 }
