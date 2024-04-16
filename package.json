@@ -17,7 +17,7 @@
   },
   "homepage": "https://github.com/NICK-FURY-6023/gemini-ai#readme",
   "dependencies": {
-    "@google/generative-ai": "^0.7.0",
+    "@google/generative-ai": "^0.7.1",
     "@types/node": "^20.12.7",
     "axios": "^1.6.8",
     "cheerio": "^1.0.0-rc.12",
