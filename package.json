@@ -32,6 +32,6 @@
     "pdf-parse": "^1.1.1",
     "sharp": "^0.33.3",
     "ws": "^8.16.0",
-    "youtube-transcript": "^1.1.0"
+    "youtube-transcript": "^1.2.1"
   }
 }
