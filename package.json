@@ -22,7 +22,7 @@
     "axios": "^1.6.8",
     "cheerio": "^1.0.0-rc.12",
     "crypto": "^1.0.1",
-    "discord.js": "^14.15.2",
+    "discord.js": "^14.15.3",
     "dotenv": "^16.4.5",
     "eventsource": "^2.0.2",
     "fs": "^0.0.1-security",
