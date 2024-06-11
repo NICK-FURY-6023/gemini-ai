@@ -165,7 +165,7 @@ client.once('ready', async () => {
             { name: 'Redmond', value: 'Redmond' },
             { name: 'DallE-XL', value: 'DallE-XL' },
             { name: 'Juggernaut', value: 'Juggernaut' },
-            { name: 'Dall-e-3', value: 'Dall-e-3' },
+            //{ name: 'Dall-e-3', value: 'Dall-e-3' },
             { name: 'SD-XL-Alt', value: 'SD-XL-Alt' }
           )
       )
@@ -633,7 +633,7 @@ async function handleTextMessage(message) {
     botMessage = await message.reply('> `Let me think...`');
     const isServerChatHistoryEnabled = message.guild ? serverSettings[message.guild.id]?.serverChatHistory : false;
     // Only include instructions if they are set.
-    const model = await genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest", systemInstruction: { role: "system", parts: [{ text: instructions ? instructions : "You are Gemini Pro, a large language model trained by Google, based on the Gemini 1.5 Pro architecture. You are chatting with the user via the Gemini Discord bot. This means most of the time your lines should be a sentence or two, unless the user's request requires reasoning or long-form outputs. Never use emojis, unless explicitly asked to." }] } }, { apiVersion: 'v1beta' });
+    const model = await genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest", systemInstruction: { role: "system", parts: [{ text: instructions ? instructions : "You are Gemini Pro, a large language model trained by Google, based on the Gemini 1.5 Pro architecture. You are chatting with the user via the Gemini Discord bot. This means most of the time your lines should be a sentence or two, unless the user's request requires reasoning or long-form outputs. Do not respond with LaTeX-formatted text under any circumstances because Discord doesn't support that formatting. Never use emojis, unless explicitly asked to." }] } }, { apiVersion: 'v1beta' });
     const chat = model.startChat({
       history: isServerChatHistoryEnabled ? getHistory(message.guild.id) : getHistory(message.author.id),
       safetySettings,
@@ -675,9 +675,11 @@ async function handleSpeechCommand(interaction) {
     }
   } catch (error) {
     console.log(error);
-    const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong and the output is not available.` });
-    await addSettingsButton(messageReference);
-    await generatingMsg.delete();
+    try {
+      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong and the output is not available.` });
+      await addSettingsButton(messageReference);
+      await generatingMsg.delete();
+    } catch(error) {}
   }
 }
 
@@ -697,9 +699,11 @@ async function handleMusicCommand(interaction) {
     }
   } catch (error) {
     console.log(error);
-    const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong and the output is not available.` });
-    await addSettingsButton(messageReference);
-    await generatingMsg.delete();
+    try {
+      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong and the output is not available.` });
+      await addSettingsButton(messageReference);
+      await generatingMsg.delete();
+    } catch(error) {}
   }
 }
 
@@ -719,9 +723,11 @@ async function handleVideoCommand(interaction) {
     }
   } catch (error) {
     console.log(error);
-    const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong and the output is not available.` });
-    await addSettingsButton(messageReference);
-    await generatingMsg.delete();
+    try {
+      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong and the output is not available.` });
+      await addSettingsButton(messageReference);
+      await generatingMsg.delete();
+    } catch(error) {}
   }
 }
 
@@ -869,7 +875,7 @@ async function genimg(prompt, message) {
   const generatingMsg = await message.reply({ content: `Generating your image, please wait... 🖌️` });
 
   try {
-    const imageResult = await generateImageWithPrompt(prompt, message.author.id);
+    const { imageResult, enhancedPrompt } = await generateImageWithPrompt(prompt, message.author.id);
     const imageUrl = imageResult.images[0].url; 
     const modelUsed = imageResult.modelUsed;
     const isGuild = message.guild !== null;
@@ -878,13 +884,21 @@ async function genimg(prompt, message) {
     const embed = new EmbedBuilder()
       .setColor(0x505050)
       .setAuthor({ name: `To ${message.author.displayName}`, iconURL: message.author.displayAvatarURL() })
-      .setDescription(`Here Is Your Generated Image\n**Prompt:**\n\`\`\`${prompt}\`\`\``)
+      .setDescription(`Here Is Your Generated Image\n**Original Prompt:**\n\`\`\`${prompt}\`\`\``)
       .addFields(
         { name: '**Generated by:**', value: `\`${message.author.displayName}\``, inline: true },
-        { name: '**Model Used:**', value: `\`${modelUsed}\``, inline: true }
+        { name: '**Model Used:**', value: `\`${modelUsed}\``, inline: true },
+        { name: '**Promot Enhancer:**', value: `\`${enhancedPrompt !== 'Disabled' ? 'Enabled' : 'Disabled'}\``, inline: true }
       )
       .setImage('attachment://generated-image.png')
       .setTimestamp()
+    if (enhancedPrompt !== 'Disabled') {
+      let displayPrompt = enhancedPrompt;
+      if (enhancedPrompt.length > 950) {
+        displayPrompt = `${enhancedPrompt.slice(0, 947)}...`;
+      }
+      embed.addFields({ name: '**Enhanced Prompt:**', value: `\`\`\`${displayPrompt}\`\`\``, inline: false });
+    }
     if (isGuild) {
       embed.setFooter({ text: message.guild.name, iconURL: message.guild.iconURL() || 'https://ai.google.dev/static/site-assets/images/share.png' });
     }
@@ -894,9 +908,11 @@ async function genimg(prompt, message) {
     await generatingMsg.delete();
   } catch (error) {
     console.error(error);
-    const messageReference = await message.reply({ content: `Sorry, could not generate the image. Please try again later.` });
-    await addSettingsButton(messageReference);
-    await generatingMsg.delete();
+    try {
+      const messageReference = await message.reply({ content: `Sorry, could not generate the image. Please try again later.` });
+      await addSettingsButton(messageReference);
+      await generatingMsg.delete();
+    } catch(error) {}
   }
 }
 
@@ -909,15 +925,17 @@ async function genimgslash(prompt, model, interaction) {
     await generatingMsg.delete();
   } catch (error) {
     console.log(error);
-    const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, the image could not be generated. Please try again later.` });
-    await addSettingsButton(messageReference);
-    await generatingMsg.delete();
+    try {
+      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, the image could not be generated. Please try again later.` });
+      await addSettingsButton(messageReference);
+      await generatingMsg.delete();
+    } catch(error) {}
   }
 }
 
 async function generateAndSendImage(prompt, interaction) {
   try {
-    const imageResult = await generateImageWithPrompt(prompt, interaction.user.id);
+    const { imageResult, enhancedPrompt } = await generateImageWithPrompt(prompt, interaction.user.id);
     const imageUrl = imageResult.images[0].url;
     const modelUsed = imageResult.modelUsed;
     const isGuild = interaction.guild !== null;
@@ -927,13 +945,21 @@ async function generateAndSendImage(prompt, interaction) {
     const embed = new EmbedBuilder()
       .setColor(0x505050)
       .setAuthor({ name: `To ${interaction.user.displayName}`, iconURL: interaction.user.displayAvatarURL() })
-      .setDescription(`Here Is Your Generated Image\n**Prompt:**\n\`\`\`${prompt}\`\`\``)
+      .setDescription(`Here Is Your Generated Image\n**Original Prompt:**\n\`\`\`${prompt}\`\`\``)
       .addFields(
         { name: '**Generated by:**', value: `\`${interaction.user.displayName}\``, inline: true },
-        { name: '**Model Used:**', value: `\`${modelUsed}\``, inline: true }
+        { name: '**Model Used:**', value: `\`${modelUsed}\``, inline: true },
+        { name: '**Promot Enhancer:**', value: `\`${enhancedPrompt !== 'Disabled' ? 'Enabled' : 'Disabled'}\``, inline: true }
       )
       .setImage('attachment://generated-image.png')
       .setTimestamp();
+    if (enhancedPrompt !== 'Disabled') {
+      let displayPrompt = enhancedPrompt;
+      if (enhancedPrompt.length > 900) {
+        displayPrompt = `${enhancedPrompt.slice(0, 897)}...`;
+      }
+      embed.addFields({ name: '**Enhanced Prompt:**', value: `\`\`\`${displayPrompt}\`\`\``, inline: false });
+    }
     if (isGuild) {
       embed.setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() || 'https://ai.google.dev/static/site-assets/images/share.png' });
     }
@@ -980,9 +1006,11 @@ async function handleModalSubmit(interaction) {
       }
     } catch (error) {
       console.log(error);
-      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
-      await addSettingsButton(messageReference);
-      await generatingMsg.delete();
+      try {
+        const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
+        await addSettingsButton(messageReference);
+        await generatingMsg.delete();
+      } catch(error) {}
     }
   } else if (interaction.customId === 'text-music-modal') {
     const generatingMsg = await interaction.reply({ content: `${interaction.user}, generating your music, please wait... 🎧` });
@@ -1000,9 +1028,11 @@ async function handleModalSubmit(interaction) {
       }
     } catch (error) {
       console.log(error);
-      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
-      await addSettingsButton(messageReference);
-      await generatingMsg.delete();
+      try {
+        const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
+        await addSettingsButton(messageReference);
+        await generatingMsg.delete();
+      } catch(error) {}
     }
   } else if (interaction.customId === 'text-video-modal') {
     const generatingMsg = await interaction.reply({ content: `${interaction.user}, generating your video, please wait... 📽️` });
@@ -1020,9 +1050,11 @@ async function handleModalSubmit(interaction) {
       }
     } catch (error) {
       console.log(error);
-      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
-      await addSettingsButton(messageReference);
-      await generatingMsg.delete();
+      try {
+        const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
+        await addSettingsButton(messageReference);
+        await generatingMsg.delete();
+      } catch(error) {}
     }
   } else if (interaction.customId === 'generate-image-modal') {
     const prompt = interaction.fields.getTextInputValue('image-prompt-input');
@@ -1033,9 +1065,12 @@ async function handleModalSubmit(interaction) {
       await generateAndSendImage(prompt, interaction);
       await generatingMsg.delete();
     } catch (error) {
-      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, could not generate the image. Please try again later.` });
-      await addSettingsButton(messageReference);
-      await generatingMsg.delete();
+      console.log(error);
+      try {
+        const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, could not generate the image. Please try again later.` });
+        await addSettingsButton(messageReference);
+        await generatingMsg.delete();
+      } catch(error) {}
     }
   }
 }
@@ -1044,7 +1079,7 @@ async function changeImageModel(interaction) {
   try {
     // Define model names in an array
     const models = [
-      'SD-XL', 'Playground', 'Anime', 'Stable-Cascade', 'Redmond', 'DallE-XL', 'Juggernaut', 'Dall-e-3', 'SD-XL-Alt'
+      'SD-XL', 'Playground', 'Anime', 'Stable-Cascade', 'Redmond', 'DallE-XL', 'Juggernaut'/*, 'Dall-e-3'*/, 'SD-XL-Alt'
       ];
     
     const selectedModel = userPreferredImageModel[interaction.user.id] || defaultImgModel;
@@ -1086,7 +1121,7 @@ async function changeImageResolution(interaction) {
     const userId = interaction.user.id;
     const selectedModel = userPreferredImageModel[userId];
     let supportedResolution;
-    const supportedModels = ['DallE-XL', 'Redmond', 'Anime', 'Stable-Cascade', 'Playground', 'Juggernaut'];
+    const supportedModels = ['DallE-XL', 'Redmond', 'Anime', 'Stable-Cascade', 'Playground', 'Juggernaut', 'SD-XL-Alt'];
     if (supportedModels.includes(selectedModel)) {
       supportedResolution = ['Square', 'Portrait', 'Wide'];
     } else {
@@ -1116,7 +1151,7 @@ async function changeImageResolution(interaction) {
     const actionRow = new ActionRowBuilder().addComponents(selectMenu);
 
     await interaction.reply({
-      content: '> **Supported Models:** `Stable-Cascade`, `Redmond`, `Playground`, `Juggernaut`, `Anime`, and `DallE-XL`\n\n> `Select Image Generation Resolution:`',
+      content: '> **Supported Models:** `Stable-Cascade`, `Redmond`, `SD-XL-Alt`, `Playground`, `Juggernaut`, `Anime`, and `DallE-XL`\n\n> `Select Image Generation Resolution:`',
       components: [actionRow],
       ephemeral: true
     });
@@ -1212,92 +1247,105 @@ async function togglePromptEnhancer(interaction) {
   }
 }
 
-const diffusionMaster = `You are Diffusion Master, an expert in crafting intricate prompts for the generative AI 'Stable Diffusion', ensuring top-tier image generation by always thinking step by step and showing your work. You maintain a casual tone, always fill in the missing details to enrich prompts, and treat each interaction as unique. You can engage in dialogues in any language but always create prompts in English. You are designed to guide users through creating a prompt that can result in potentially award-winning images, with attention to detail that includes background, style, and additional artistic requirements.\n\nBasic information required to make a Stable Diffusion prompt:\n-   **Prompt Structure**:\n    -   For Photorealistic Images: {Subject Description}, Type of Image, Art Styles, Art Inspirations, Camera, Shot, Render Related Information.  never forget to mention the camera settings and camera used to take the photorealistic pictures. \n    -   For Artistic Image Types: Type of Image, {Subject Description}, Art Styles, Art Inspirations, Camera, Shot, Render Related Information.\n-   **Guidelines**:\n\n    -   Word order and effective adjectives matter in the prompt.\n    -   The environment/background should be described.\n    -   The exact type of image can be specified.\n    -   Art style-related keywords can be included.\n    -   Pencil drawing-related terms can be added.\n    -   Curly brackets are necessary in the prompt.\n    -   Art inspirations should be listed.\n    -   Include information about lighting, camera angles, render style, resolution, and detail.\n    -   Specify camera shot type, lens, and view.\n    -   Include keywords related to resolution, detail, and lighting.\n    -   Extra keywords: masterpiece, by oprisco, rutkowski, by marat safin.\n    -   The weight of a keyword can be adjusted using (keyword: factor).\n-   **Note**:\n\n    -   The prompts you provide will be in English.\n    -   Concepts that can't be real should not be described as "Real", "realistic", or "photo".\n\nThe prompts often contain weighted numbers in parentheses to indicate the importance or emphasis of certain details. For example, "(masterpiece:1.5)" indicates that the quality of the work is very important. Multiple parentheses also have similar effects. In addition, if square brackets are used, such as "{blue hair:white hair:0.3}", this represents the fusion of blue and white hair, with blue hair accounting for 0.3.\n\nHere is an example of using prompts to help an AI model generate an image: masterpiece,(bestquality),highlydetailed,ultra-detailed,cold,solo,(1girl),(detailedeyes),(shinegoldeneyes),(longliverhair),expressionless,(long sleeves),(puffy sleeves),(white wings),shinehalo,(heavymetal:1.2),(metaljewelry),cross-lacedfootwear (chain),(Whitedoves:1.2)\n\nFollowing the example, write a prompt that details the following content. Start the prompt directly, don't use natural language to provide any other information:`
-
-async function enhancePrompt(prompt) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const session_hash = generateSessionHash();
-      const event_id = getEventId();
-
-      const urlJoinQueue = `https://cohereforai-c4ai-command-r-plus.hf.space/queue/join?fn_index=3&session_hash=${session_hash}`;
-      const eventSource = new EventSource(urlJoinQueue);
-
-      eventSource.onmessage = async (event) => {
-        const data = JSON.parse(event.data);
-        if (data.msg === "send_data") {
-          const eventId = data?.event_id;
-          fetch("https://cohereforai-c4ai-command-r-plus.hf.space/queue/data", {
-            method: "POST",
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              data: [`${diffusionMaster}\n${prompt}`, null, null],
-              event_data: null,
-              fn_index: 1,
-              session_hash: session_hash,
-              event_id: eventId
-            })
-          });
-        } else if (data.msg === "process_completed") {
-          eventSource.close();
-          if (data.output.data[0][0][1]) {
-            const rawPrompt = data.output.data[0][0][1];
-            const pattern = /^("|```)|("|```)$/g;
-            const ePrompt = rawPrompt.replace(pattern, '');
-            console.log(ePrompt);
-            resolve(ePrompt);
-          } else {
-            resolve(prompt);
-          }
-        }
-      };
-
-      eventSource.onerror = (error) => {
-        eventSource.close();
-        resolve(prompt);
-      };
-
-    } catch (error) {
-      console.log(error);
-      resolve(prompt);
-    }
-  });
-}
+const diffusionMaster = `You are the Diffusion Master, an expert at crafting detailed prompts for the generative AI "Stable Diffusion." Your skill ensures top-tier image generation by meticulously planning out each step and sharing your approach. You keep your tone casual and always add necessary details to enrich prompts, considering each interaction as unique. Construct prompts exclusively in English, translate to English if needed. Your expertise enables users to create prompts that could lead to potentially award-winning images, focusing on details such as background, style, and additional artistic elements.\n\n## Basic information required for crafting a Stable Diffusion prompt:-\n\nPrompt Structure:\n\n- **For Photorealistic Images**: Use the format \`{Subject Description}, Type of Image, Art Styles, Art Inspirations, Camera Settings, Shot Type, and Render Related Information\`. It's crucial to detail the camera settings and model for achieving photorealism.\n\n- **For Artistic Images**: Adopt the format \`Type of Image, {Subject Description}, Art Styles, Art Inspirations, Angle, Perspective, Render Related Information\`. This structure is ideal for conveying artistic visions, emphasizing style, and perspective.\n\nEssential Guidelines:\n\n1. **Immediate Focus on Subjects and Actions**: Begin your description by clearly mentioning the main subjects and their actions. This ensures the initial focus is sharp and the narrative starts with clarity and purpose.\n\n2. **Art Style Selection Protocol**: If the art style is not specified by the user, automatically determine the most fitting style for the image. For subjects and scenes not inherently tied to a particular art style, default to photorealism. However, if the subject is closely associated with a specific genre (e.g., anime characters like those from Konohagakure in Naruto), adapt the corresponding art style (in this case, anime) unless instructed otherwise by the user.\n\n3. **Word Choice and Adjectives**: Use strategic placement of keywords and select vivid adjectives to significantly impact the visualization. These elements are crucial for painting a detailed picture for the AI.\n\n4. **Environment/Background Details**: Incorporate comprehensive descriptions of the surroundings to add context and depth to the main subject, enriching the overall scene being depicted.\n\n5. **Image Specification Clarity**: Clearly define the desired type of image to steer the AI towards creating a vision that aligns with your expectations.\n\n6. **Incorporating Art Styles and Inspirations**: Mention specific art styles or inspirations to guide the AI in emulating a particular aesthetic or technique that resonates with your vision.\n\n7. **Technical Detailing**: Elaborate on camera angles, lighting, and preferred render styles to either enhance the artistic flair or ensure the realism of the image lives up to the envisioned clarity.\n\n8. **Keyword Utilization and Importance Leveling**: Apply parentheses for emphasizing specific features (e.g., "(masterpiece:1.5)") and square brackets for blending characteristics (e.g., "{blue hair:white hair:0.3}"). This syntax assists in assigning the importance of various elements, helping balance the composition according to your preferences.\n\nIllustrated Examples:\n\n1. cinematic movie extreme close-up still of an epic scene of a [ETHNICITY] [OCCUPATION] in the [SEASON] at [DAYTIME], centered, looking into the camera, fog atmosphere, volumetrics, photorealistic, from a western movie, analog, very grainy, film still, kodak ektar, fujifilm fuji, kodak gold, cinestill 800t, kodak portra, photo taken by thomas hoepker\n\n2. fuji film candid portrait of [SUBJECT] wearing sunglasses rocking out on the streets of miami at night, 80s album cover, vaporwave, synthwave, retrowave, cinematic, intense, highly detailed, dark ambient, beautiful, dramatic lighting, hyperrealistic\n\n3. by (Boris Vallejo:0.85) and (pixar:0.75) cinematic film still of a detailed (happy:1.35) weirdpunk king driving a motorcycle, a detective solves crimes by rogue androids . shallow depth of field, vignette, highly detailed, bokeh, cinemascope, moody, epic, gorgeous, film grain, grainy\n\n4. *~cinematic~*~ #macro tilt shift photography . professional #disassembled 3d #fractal cube torus triangular pyramid model in space, connected with energy flows, #science fiction, intricate fire ice water light energy reflection, elegant, highly detailed, sharp focus . octane render, highly detailed, volumetric, dramatic lighting . natural light photo, Canon 85L f2.8, ISO320, 5000K colour balance\n\n5. an epic chibi comic book style portrait painting of a teddy bear ninja, character design by mark ryden and pixar and hayao miyazaki, unreal 5, daz, hyperrealistic, octane render, cosplay, rpg portrait, dynamic lighting, intricate detail, harvest fall vibrancy, cinematic\n\n6. art design by Masamune Shirow and Detroit Become Human of a beautiful sorceress walking through the forest by night surrounded by a blue aura bubble around her, you can see the stars in the sky, natural light photo, Canon 85L f2.8, ISO320, 5000K colour balance, directed by Wes Anderson and Arcane\n\n7. portrait of a battered defeated humanoid robot made out of silver metal standing on a hill overlooking the ruins of a destroyed urban city, from behind, golden hour, dystopian retro futuristic, natural light photo, Canon 85L f4.8, ISO320, 5000K colour balance, (pulp art by Robert Mcginnis:0.9) and (pixar:0.7)\n\n8. photo of a battle cyborg fighting a dark hr giger battle druid with chrome skin, on a space station, explosions and smoke in the background, photorealistic, narrow corridor lights, from the movie "chappie", analog, very grainy, film still, kodak ektar, fujifilm fuji, kodak gold, cinestill 800t, kodak portra, photo taken by thomas hoepker\n\nThese guidelines and examples serve as a comprehensive blueprint for translating imaginative concepts into precise prompts, facilitating the generation of stunning AI-powered images that adhere closely to the user's vision.\nFollowing the example, write a prompt that describes the specified content. Start directly with the prompt, providing only the prompt itself, without using any kind of natural language other than the prompt itself. Ensure the prompt is enclosed within a code block:`
 
 async function enhancePrompt1(prompt) {
-  try {
-    const payload = {
-      model: "zephyr-orpo-141b",
-      stream: false,
-      messages: [
-        {
-          role: "user",
-          content: `${diffusionMaster}\n${prompt}`
+  const retryLimit = 3;
+  let currentAttempt = 0;
+  let error;
+
+  while (currentAttempt < retryLimit) {
+    try {
+      currentAttempt += 1;
+      console.log(`Attempt ${currentAttempt}`);
+
+      let response = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Request timed out'));
+        }, 15000);
+
+        const payload = {
+          model: "llama3-70b-8192",
+          stream: false,
+          messages: [
+            {
+              role: "user",
+              content: `${diffusionMaster}\n${prompt}`
+            }
+          ]
+        };
+
+        const headers = {
+          "Content-Type": "application/json"
+        };
+        if (process.env.OPENAI_API_KEY) {
+          headers['Authorization'] = `Bearer ${process.env.OPENAI_API_KEY}`;
         }
-      ]
-    };
 
-    const headers = {
-      "Content-Type": "application/json"
-    };
 
-    const response = await axios.post('https://niansuh-hfllmapi.hf.space/api/v1/chat/completions', payload, { headers: headers });
+        const baseURL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+        axios.post(`${baseURL}/chat/completions`, payload, { headers: headers })
+          .then(response => {
+            clearTimeout(timeout);
+            resolve(response);
+          })
+          .catch(err => {
+            clearTimeout(timeout);
+            reject(err);
+          });
+      });
 
-    if (response.data && response.data.choices && response.data.choices.length > 0) {
-      let content = response.data.choices[0].message.content;
-      const pattern = /^("|```)|("|```)$/g;
-      content = content.replace(pattern, '');
-      console.log(content);
-      return content;
-    } else {
-      console.log('Unexpected response format or empty response');
-      return prompt;
+      if (response.data && response.data.choices && response.data.choices.length > 0) {
+        let content = response.data.choices[0].message.content;
+        const pattern1 = /^(```|`|"|')|(```|`|"|')$/g;
+        content = content.replace(pattern1, '').trim();
+        const pattern2 = content.match(/```(.*?)```/s);
+        content = pattern2 && pattern2[1] ? pattern2[1].trim() : content;
+        console.log(content);
+        return content;
+      } else {
+        console.log('Error processing response data');
+        error = new Error('Error processing response data');
+      }
+    } catch (err) {
+      console.error(err.message);
+      error = err;
     }
-  } catch (error) {
-    console.error(error);
-    return prompt;
+  }
+  if (error) {
+    console.error('Retries exhausted or an error occurred:', error.message);
+  }
+  return prompt;
+}
+
+async function enhancePrompt(prompt, attempts = 3) {
+  const generate = async () => {
+    const model = genAI.getGenerativeModel({ model: "gemini-pro", safetySettings });
+    const result = await model.generateContent(`${diffusionMaster}\n${prompt}`);
+    return result.response.text();
+  };
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const textResponse = await Promise.race([
+                generate(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000))
+            ]);
+
+      let cleansedOutput = textResponse;
+      const pattern1 = /^(```|`|"|')|(```|`|"|')$/g;
+      cleansedOutput = cleansedOutput.replace(pattern1, '').trim();
+      const pattern2 = cleansedOutput.match(/```(.*?)```/s);
+      cleansedOutput = pattern2 && pattern2[1] ? pattern2[1].trim() : cleansedOutput;
+      console.log(cleansedOutput);
+      return cleansedOutput;
+    } catch (error) {
+      console.error(`Attempt ${attempt} failed:`, error);
+      if (attempt === attempts) {
+        console.log('All attempts failed, returning the original prompt.');
+        return prompt;
+      }
+    }
   }
 }
 
@@ -1312,11 +1360,21 @@ async function generateImageWithPrompt(prompt, userId) {
     if (!generateFunction) {
       throw new Error(`Unsupported model: ${selectedModel}`);
     }
+
     let finalPrompt = filterPrompt(prompt);
+    let enhancedPromptStatus;
+
     if (userPreferredImagePromptEnhancement[userId]) {
       finalPrompt = await enhancePrompt(finalPrompt);
+      enhancedPromptStatus = finalPrompt;
+    } else {
+      enhancedPromptStatus = 'Disabled';
     }
-    return await retryOperation(() => generateFunction(finalPrompt, resolution), 3);
+    const imageResult = await retryOperation(() => generateFunction(finalPrompt, resolution), 3);
+    return {
+      imageResult,
+      enhancedPrompt: enhancedPromptStatus
+    };
   } catch (error) {
     console.error('Error generating image:', error);
     throw new Error('Could not generate image after retries');
@@ -2262,10 +2320,14 @@ async function handleModelResponse(botMessage, responseFunc, originalMessage) {
   const filter = (interaction) => interaction.customId === 'stopGenerating' && interaction.user.id === originalMessage.author.id;
   const collector = botMessage.createMessageComponentCollector({ filter, time: 300000 });
 
-  collector.on('collect', async (interaction) => {
-    await interaction.reply({ content: 'Response generation stopped by the user.', ephemeral: true });
-    stopGeneration = true;
-  });
+  try {
+    collector.on('collect', async (interaction) => {
+      try {
+        await interaction.reply({ content: 'Response generation stopped by the user.', ephemeral: true });
+      } catch(error) {}
+      stopGeneration = true;
+    });
+  } catch(error) {}
 
   const updateMessage = async () => {
     if (stopGeneration) {
@@ -2727,8 +2789,12 @@ function generateWithSC(prompt,  resolution) {
         const data = JSON.parse(event.data);
         if (data.msg === 'process_completed') {
           es.close();
-          const outputUrl = data?.output?.data?.[0]?.url;
-          resolve({ images: [{ url: outputUrl }], modelUsed: "Stable-Cascade" });
+          if (!data?.output?.data?.[0]?.url) {
+            reject(new Error("Output URL is missing"));
+          } else {
+            const outputUrl = data.output.data[0].url;
+            resolve({ images: [{ url: outputUrl }], modelUsed: "Stable-Cascade" });
+          }
         }
       };
 
@@ -2845,7 +2911,11 @@ function generateWithDallEXL(prompt, resolution) {
         if (data.msg === 'process_completed') {
           es.close();
           const outputUrl = data?.output?.data?.[0]?.[0]?.image?.url;
-          resolve({ images: [{ url: outputUrl }], modelUsed: "DallE-XL" });
+          if (!outputUrl) {
+            reject(new Error("Output URL does not exist, path might be invalid."));
+          } else {
+            resolve({ images: [{ url: outputUrl }], modelUsed: "DallE-XL" });
+          }
         }
       };
 
@@ -2881,7 +2951,7 @@ function generateWithAnime(prompt, resolution) {
         },
         body: JSON.stringify({
           data: [
-            prompt, `(rating_explicit:1.2), ${nevPrompt}`, randomDigit, 1024, 1024, 5, 35, "Euler a", size,"(None)", "Standard v3.1", false, 0.55, 1.5, true
+            prompt, `(rating_explicit:1.2), ${nevPrompt}`, randomDigit, 1024, 1024, 4, 35, "DPM++ 2M SDE Karras", size,"(None)", "Standard v3.1", false, 0.55, 1.5, true
           ],
           event_data: null,
           fn_index: 5,
@@ -2898,7 +2968,11 @@ function generateWithAnime(prompt, resolution) {
         if (data.msg === 'process_completed') {
           es.close();
           const outputUrl = data?.output?.data?.[0]?.[0]?.image?.url;
-          resolve({ images: [{ url: outputUrl }], modelUsed: "Anime" });
+          if (!outputUrl) {
+            reject(new Error('Invalid or missing output URL'));
+          } else {
+            resolve({ images: [{ url: outputUrl }], modelUsed: "Anime" });
+          }
         }
       };
 
@@ -2913,17 +2987,29 @@ function generateWithAnime(prompt, resolution) {
   });
 }
 
-function generateWithSDXLAlt(prompt) {
+function generateWithSDXLAlt(prompt, resolution) {
+  let width, height;
+  if (resolution == 'Square') {
+    width = 1024;
+    height = 1024;
+  } else if (resolution == 'Wide') {
+    width = 1280;
+    height = 768;
+  } else if (resolution == 'Portrait') {
+    width = 768;
+    height = 1280;
+  }
   return new Promise((resolve, reject) => {
     try {
-      const url = "https://bytedance-sdxl-lightning.hf.space";
+      const url = "https://bytedance-hyper-sdxl-1step-t2i.hf.space";
+      const randomDigit = generateRandomDigits();
       const session_hash = generateSessionHash();
       const urlFirstRequest = `${url}/queue/join?`;
       const dataFirstRequest = {
-        "data": [prompt, "8-Step"],
+        "data": [1, height, width, prompt, randomDigit],
         "event_data": null,
-        "fn_index": 1,
-        "trigger_id": 7,
+        "fn_index": 0,
+        "trigger_id": 9,
         "session_hash": session_hash
       };
 
@@ -2938,9 +3024,12 @@ function generateWithSDXLAlt(prompt) {
 
           if (data.msg === "process_completed") {
             eventSource.close();
-            const full_url = data["output"]["data"][0]["url"];
-
-            resolve({ images: [{ url: full_url }], modelUsed: "SD-XL-Alt" });
+            if (data?.output?.data?.[0]?.[0]?.image?.url) {
+              const full_url = data.output.data[0][0].image.url;
+              resolve({ images: [{ url: full_url }], modelUsed: "SD-XL-Alt" });
+            } else {
+              reject(new Error("Invalid path: URL does not exist."));
+            }
           }
         };
         eventSource.onerror = (error) => {
@@ -2982,60 +3071,10 @@ function generateWithSDXL(prompt) {
           if (data.msg === "process_completed") {
             eventSource.close();
             const full_url = data?.["output"]?.["data"]?.[0]?.["url"];
-
+            if (!full_url) {
+              throw new Error("The generated URL does not exist.");
+            }
             resolve({ images: [{ url: full_url }], modelUsed: "SD-XL" });
-          }
-        };
-        eventSource.onerror = (error) => {
-          eventSource.close();
-          reject(error);
-        };
-      }).catch(error => {
-        reject(error);
-      });
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-function generateWithJuggernaut(prompt, resolution) {
-  let size;
-  if (resolution == 'Square') {
-    size = '1024 x 1024';
-  } else if (resolution == 'Wide') {
-    size = '1152 x 896';
-  } else if (resolution == 'Portrait') {
-    size = '896 x 1152';
-  }
-  return new Promise((resolve, reject) => {
-    try {
-      const url = "https://artificialguybr-juggernaut-xl-free-demo.hf.space";
-      const session_hash = generateSessionHash();
-      const randomDigit = generateRandomDigits();
-      const urlFirstRequest = `${url}/queue/join?`;
-      const dataFirstRequest = {
-        "data": [prompt, nevPrompt, randomDigit, 1024, 1024, 4, 35, "DPM++ 2M SDE Karras", size, false, 0.55, 1.5],
-        "event_data": null,
-        "fn_index": 9,
-        "trigger_id": 7,
-        "session_hash": session_hash
-      };
-
-      axios.post(urlFirstRequest, dataFirstRequest).then(responseFirst => {
-
-        const urlSecondRequest = `${url}/queue/data?session_hash=${session_hash}`;
-
-        const eventSource = new EventSource(urlSecondRequest);
-
-        eventSource.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-
-          if (data.msg === "process_completed") {
-            eventSource.close();
-            const full_url = data?.["output"]?.["data"]?.[0]?.[0]?.["image"]?.["url"];
-
-            resolve({ images: [{ url: full_url }], modelUsed: "Juggernaut" });
           }
         };
         eventSource.onerror = (error) => {
@@ -3090,6 +3129,9 @@ function generateWithRedmond(prompt, resolution) {
         if (data.msg === 'process_completed') {
           es.close();
           const outputUrl = data?.output?.data?.[0]?.[0]?.image?.url;
+          if (!outputUrl) {
+            throw new Error("The generated URL does not exist.");
+          }
           resolve({ images: [{ url: outputUrl }], modelUsed: "Redmond" });
         }
       };
@@ -3099,6 +3141,64 @@ function generateWithRedmond(prompt, resolution) {
         reject(error);
       };
 
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+async function generateWithJuggernaut(prompt, resolution) {
+  let size;
+  if (resolution == 'Square') {
+    size = '1024 x 1024';
+  } else if (resolution == 'Wide') {
+    size = '1344 x 768';
+  } else if (resolution == 'Portrait') {
+    size = '896 x 1152';
+  }
+  return new Promise(async (resolve, reject) => {
+    const randomDigit = generateRandomDigits();
+    const sessionHash = generateSessionHash();
+  
+    try {
+      // First request to initiate the process
+      await fetch("https://damarjati-playground.hf.space/queue/join?", {
+        method: "POST",
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          data: [
+              prompt, `(rating_explicit:1.2), ${nevPrompt}`, randomDigit, 1024, 1024, 4, 35, "DPM++ 2M SDE Karras", size, "(None)", "(None)", false, 0.55, 1.5, true
+            ],
+          event_data: null,
+          fn_index: 4,
+          trigger_id: 48,
+          session_hash: sessionHash,
+        }),
+      });
+  
+      // Using EventSource to listen for server-sent events
+      const es = new EventSource(`https://damarjati-playground.hf.space/queue/data?session_hash=${sessionHash}`);
+  
+      es.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.msg === 'process_completed') {
+          es.close();
+          const outputUrl = data?.output?.data?.[0]?.[0]?.image?.url;
+          if (!outputUrl) {
+            reject(new Error('Invalid or missing output URL'));
+          } else {
+            resolve({ images: [{ url: outputUrl }], modelUsed: "Juggernaut" });
+          }
+        }
+      };
+  
+      es.onerror = (error) => {
+        es.close();
+        reject(error);
+      };
+  
     } catch (error) {
       reject(error);
     }
@@ -3118,18 +3218,25 @@ async function generateWithDalle3(prompt) {
       n: 1
     });
   
-    try {
-      const response = await fetch(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1/images/generations', {
-        method: 'POST', headers, body
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(`${response.status} ${data?.message || ''}`);
-      }
-      return { images: data.data, modelUsed: "Dall-e-3" };
-    } catch (error) {
-      throw error;
+    // Create a new promise that rejects in 15 seconds to represent the timeout
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error('Request timed out (15 seconds limit)'));
+      }, 15000);
+    });
+
+    // Modify the fetch call to race against the timeout promise
+    const fetchPromise = fetch(`${process.env.OPENAI_BASE_URL}/images/generations` || 'https://api.openai.com/v1/images/generations', {
+      method: 'POST', headers, body
+    });
+
+    // Use Promise.race to see which promise settles first: the fetch call or the timeout
+    const response = await Promise.race([fetchPromise, timeoutPromise]);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(`${response.status} ${data?.message || ''}`);
     }
+    return { images: data.data, modelUsed: "Dall-e-3" };
   } catch (error) {
     console.log(error);
     throw error;
