@@ -20,7 +20,7 @@
     "@google/generative-ai": "^0.16.0",
     "@types/node": "^22.1.0",
     "axios": "^1.6.8",
-    "cheerio": "^1.0.0-rc.12",
+    "cheerio": "^1.0.0",
     "crypto": "^1.0.1",
     "discord.js": "^14.15.2",
     "dotenv": "^16.4.5",
