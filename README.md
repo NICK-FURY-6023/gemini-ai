@@ -1,2 +1,5 @@
 # gemini-ai
-ai discord bot
+
+
+
+# ai discord bot it's need more update 
