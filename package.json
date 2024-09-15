@@ -30,7 +30,7 @@
     "node-fetch": "^3.3.2",
     "npm": "^10.8.2",
     "pdf-parse": "^1.1.1",
-    "sharp": "^0.33.4",
+    "sharp": "^0.33.5",
     "ws": "^8.17.0",
     "youtube-transcript": "^1.2.1"
   }
