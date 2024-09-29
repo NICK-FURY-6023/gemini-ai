@@ -23,8 +23,8 @@ Gemini Discord Bot is an advanced, multimodal Discord bot leveraging Google Gene
 1. Clone the repository:
 
     ```sh
-    git clone https://github.com/hihumanzone/Gemini-Discord-Bot
-    cd Gemini-Discord-Bot
+    git clone https://github.com/NICK-FURY-6023/gemini-ai
+    cd Gemini-ai
     ```
 
 2. Install dependencies:
@@ -95,7 +95,7 @@ Contains an array of words that should be filtered from prompts.
 
 ## Community & Support
 
-- Join the [Discord Community](https://discord.com/invite/Gxpw7XF3Mj) for support, updates, and discussions.
+- Join the [Discord Community](https://discord.gg/CdCfgSC3qy) for support, updates, and discussions.
 
 ### Contributions
 
