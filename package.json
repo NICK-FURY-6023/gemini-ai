@@ -1,37 +1,21 @@
 {
-  "name": "gemini_ai",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/NICK-FURY-6023/gemini-ai.git"
-  },
-  "author": "NICK-FURY-6023",
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/NICK-FURY-6023/gemini-ai/issues"
-  },
-  "homepage": "https://github.com/NICK-FURY-6023/gemini-ai#readme",
+  "type": "module",
   "dependencies": {
-    "@google/generative-ai": "^0.19.0",
-    "@types/node": "^22.7.4",
-    "axios": "^1.6.8",
-    "cheerio": "^1.0.0-rc.12",
-    "crypto": "^1.0.1",
-    "discord.js": "^14.15.2",
-    "dotenv": "^16.4.5",
-    "eventsource": "^2.0.2",
-    "fs": "^0.0.1-security",
-    "install": "^0.13.0",
-    "node-fetch": "^3.3.2",
-    "npm": "^10.8.2",
-    "pdf-parse": "^1.1.1",
-    "sharp": "^0.33.4",
-    "ws": "^8.17.0",
-    "youtube-transcript": "^1.2.1"
+    "@google/generative-ai": "*",
+    "axios": "*",
+    "cheerio": "*",
+    "discord.js": "*",
+    "dotenv": "*",
+    "eventsource": "*",
+    "fs": "*",
+    "sharp": "*",
+    "office-text-extractor": "*",
+    "youtube-transcript": "*",
+    "node-os-utils": "*",
+    "ws": "*",
+    "mathjs": "*"
+  },
+  "scripts": {
+    "start": "node index.js"
   }
 }

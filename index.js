@@ -1,8 +1,6 @@
-// <=====[Main]=====>
-
-require('dotenv').config();
-const fetch = require('node-fetch');
-const {
+import dotenv from 'dotenv';
+dotenv.config();
+import {
   Client,
   GatewayIntentBits,
   Partials,
@@ -13,28 +11,33 @@ const {
   TextInputBuilder,
   TextInputStyle,
   ModalBuilder,
-  ModalSubmitInteraction,
-  SlashCommandBuilder,
   PermissionsBitField,
   EmbedBuilder,
   AttachmentBuilder,
   ActivityType,
   StringSelectMenuBuilder,
+  ComponentType,
   REST,
   Routes,
-} = require('discord.js');
-const { GoogleGenerativeAI, HarmBlockThreshold, HarmCategory } = require('@google/generative-ai');
-const { writeFile, unlink } = require('fs/promises');
-const fs = require('fs');
-const WebSocket = require('ws');
-const path = require('path');
-const sharp = require('sharp');
-const pdf = require('pdf-parse');
-const crypto = require('crypto');
-const cheerio = require('cheerio');
-const { YoutubeTranscript } = require('youtube-transcript');
-const axios = require('axios');
-const EventSource = require('eventsource');
+} from 'discord.js';
+import {
+  GoogleGenerativeAI,
+  HarmBlockThreshold,
+  HarmCategory
+} from '@google/generative-ai';
+import { GoogleAIFileManager, FileState } from '@google/generative-ai/server';
+import { writeFile, unlink } from 'fs/promises';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { getTextExtractor } from 'office-text-extractor'
+import * as cheerio from 'cheerio';
+import osu from 'node-os-utils';
+const { mem } = osu;
+const { cpu } = osu;
+import axios from 'axios';
+
+const config = JSON.parse(fs.readFileSync('config.json', 'utf-8'));
 
 const client = new Client({
   intents: [
@@ -47,6 +50,7 @@ const client = new Client({
 });
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+const fileManager = new GoogleAIFileManager(process.env.GOOGLE_API_KEY);
 const token = process.env.DISCORD_BOT_TOKEN;
 const activeRequests = new Set();
 
@@ -59,85 +63,199 @@ let userPreferredImageModel = {};
 let userPreferredImageResolution = {};
 let userPreferredImagePromptEnhancement = {};
 let userPreferredSpeechModel = {};
-let userPreferredUrlHandle = {};
 let userResponsePreference = {};
 let alwaysRespondChannels = {};
+let channelWideChatHistory = {};
 let blacklistedUsers = {};
 
-// Path to your file
-const DATA_FILE = path.join(__dirname, 'serverData.json');
-loadStateFromFile();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// Function to save current state to file
+const CONFIG_DIR = path.join(__dirname, 'config');
+const CHAT_HISTORIES_DIR = path.join(CONFIG_DIR, 'chat_histories_3');
+
+const FILE_PATHS = {
+  activeUsersInChannels: path.join(CONFIG_DIR, 'active_users_in_channels.json'),
+  customInstructions: path.join(CONFIG_DIR, 'custom_instructions.json'),
+  serverSettings: path.join(CONFIG_DIR, 'server_settings.json'),
+  userPreferredImageModel: path.join(CONFIG_DIR, 'user_preferred_image_model.json'),
+  userPreferredImageResolution: path.join(CONFIG_DIR, 'user_preferred_image_resolution.json'),
+  userPreferredImagePromptEnhancement: path.join(CONFIG_DIR, 'user_preferred_image_prompt_enhancement.json'),
+  userPreferredSpeechModel: path.join(CONFIG_DIR, 'user_preferred_speech_model.json'),
+  userResponsePreference: path.join(CONFIG_DIR, 'user_response_preference.json'),
+  alwaysRespondChannels: path.join(CONFIG_DIR, 'always_respond_channels.json'),
+  channelWideChatHistory: path.join(CONFIG_DIR, 'channel_wide_chatistory.json'),
+  blacklistedUsers: path.join(CONFIG_DIR, 'blacklisted_users.json')
+};
+
 function saveStateToFile() {
-  const state = {
-    chatHistories,
-    activeUsersInChannels,
-    customInstructions,
-    serverSettings,
-    userPreferredImageModel,
-    userPreferredImageResolution,
-    userPreferredImagePromptEnhancement,
-    userPreferredSpeechModel,
-    userPreferredUrlHandle,
-    userResponsePreference,
-    alwaysRespondChannels,
-    blacklistedUsers,
-  };
-
-  fs.writeFile(DATA_FILE, JSON.stringify(state, null, 2), (err) => {
-    if (err) {
-      console.error('Error saving state:', err);
-    }
-  });
-}
-
-// Function to load state from file
-function loadStateFromFile() {
   try {
-    if (fs.existsSync(DATA_FILE)) {
-      const data = fs.readFileSync(DATA_FILE);
-      const state = JSON.parse(data);
-
-      chatHistories = state.chatHistories;
-      activeUsersInChannels = state.activeUsersInChannels;
-      customInstructions = state.customInstructions;
-      serverSettings = state.serverSettings;
-      userPreferredImageModel = state.userPreferredImageModel;
-      userPreferredImageResolution = state.userPreferredImageResolution;
-      userPreferredImagePromptEnhancement = state.userPreferredImagePromptEnhancement;
-      userPreferredSpeechModel = state.userPreferredSpeechModel;
-      userPreferredUrlHandle = state.userPreferredUrlHandle;
-      userResponsePreference = state.userResponsePreference;
-      alwaysRespondChannels = state.alwaysRespondChannels;
-      blacklistedUsers = state.blacklistedUsers;
-
-      console.log('State loaded successfully.');
-    } else {
-      console.log('No previous state to load.');
+    if (!fs.existsSync(CONFIG_DIR)) {
+      fs.mkdirSync(CONFIG_DIR, { recursive: true });
     }
-  } catch (err) {
-    console.error('Error loading state:', err);
+
+    if (!fs.existsSync(CHAT_HISTORIES_DIR)) {
+      fs.mkdirSync(CHAT_HISTORIES_DIR, { recursive: true });
+    }
+
+    for (let [key, value] of Object.entries(chatHistories)) {
+      fs.writeFileSync(path.join(CHAT_HISTORIES_DIR, `${key}.json`), JSON.stringify(value, null, 2), 'utf-8');
+    }
+
+    for (let [key, value] of Object.entries(FILE_PATHS)) {
+      fs.writeFileSync(value, JSON.stringify(eval(key), null, 2), 'utf-8');
+    }
+  } catch (error) {
+    console.error('Error saving state to files:', error);
   }
 }
 
-// <==========>
+function loadStateFromFile() {
+  try {
+    if (!fs.existsSync(CONFIG_DIR)) {
+      console.warn('Config directory does not exist. Initializing with empty state.');
+      return;
+    }
 
+    if (!fs.existsSync(CHAT_HISTORIES_DIR)) {
+      fs.mkdirSync(CHAT_HISTORIES_DIR, { recursive: true });
+    } else {
+      fs.readdirSync(CHAT_HISTORIES_DIR).forEach(file => {
+        if (file.endsWith('.json')) {
+          const user = path.basename(file, '.json');
+          try {
+            const data = fs.readFileSync(path.join(CHAT_HISTORIES_DIR, file), 'utf-8');
+            chatHistories[user] = JSON.parse(data);
+          } catch (readError) {
+            console.error(`Error reading chat history for ${user}:`, readError);
+          }
+        }
+      });
+    }
 
+    for (let [key, value] of Object.entries(FILE_PATHS)) {
+      if (fs.existsSync(value)) {
+        try {
+          const data = fs.readFileSync(value, 'utf-8');
+          eval(`${key} = JSON.parse(data)`);
+        } catch (readError) {
+          console.error(`Error reading ${key}:`, readError);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error loading state from files:', error);
+  }
+}
+
+function removeFileData(chatHistories) {
+  try {
+    Object.values(chatHistories).forEach(subIdEntries => {
+      subIdEntries.forEach(message => {
+        if (message.content) {
+          message.content = message.content.filter(contentItem => {
+            if (contentItem.fileData) {
+              delete contentItem.fileData;
+            }
+            return Object.keys(contentItem).length > 0;
+          });
+        }
+      });
+    });
+    console.log('fileData elements have been removed from chat histories.');
+  } catch (error) {
+    console.error('An error occurred while removing fileData elements:', error);
+  }
+}
+
+function scheduleDailyReset() {
+  try {
+    const now = new Date();
+    const nextReset = new Date();
+    nextReset.setHours(0, 0, 0, 0);
+    if (nextReset <= now) {
+      nextReset.setDate(now.getDate() + 1);
+    }
+    const timeUntilNextReset = nextReset - now;
+
+    setTimeout(() => {
+      removeFileData(chatHistories);
+      scheduleDailyReset();
+    }, timeUntilNextReset);
+
+  } catch (error) {
+    console.error('An error occurred while scheduling the daily reset:', error);
+  }
+}
+
+scheduleDailyReset();
+loadStateFromFile();
 
 // <=====[Configuration]=====>
 
-const defaultResponseFormat = 'embedded'; //OR 'normal'
-const defaultImgModel = 'SD-XL';
-const defaultUrlReading = 'ON'; //OR 'OFF'
-const bannerMusicGen = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQAAAACACAYAAADktbcKAAADOElEQVR4Ae3UwQ0AIAwDscL+OwMPtjgjMUCcKmtmzvseAQJBgR3MLDIBAl/AADgFAmEBAxAuX3QCBsANEAgLGIBw+aITMABugEBYwACEyxedgAFwAwTCAgYgXL7oBAyAGyAQFjAA4fJFJ2AA3ACBsIABCJcvOgED4AYIhAUMQLh80QkYADdAICxgAMLli07AALgBAmEBAxAuX3QCBsANEAgLGIBw+aITMABugEBYwACEyxedgAFwAwTCAgYgXL7oBAyAGyAQFjAA4fJFJ2AA3ACBsIABCJcvOgED4AYIhAUMQLh80QkYADdAICxgAMLli07AALgBAmEBAxAuX3QCBsANEAgLGIBw+aITMABugEBYwACEyxedgAFwAwTCAgYgXL7oBAyAGyAQFjAA4fJFJ2AA3ACBsIABCJcvOgED4AYIhAUMQLh80QkYADdAICxgAMLli07AALgBAmEBAxAuX3QCBsANEAgLGIBw+aITMABugEBYwACEyxedgAFwAwTCAgYgXL7oBAyAGyAQFjAA4fJFJ2AA3ACBsIABCJcvOgED4AYIhAUMQLh80QkYADdAICxgAMLli07AALgBAmEBAxAuX3QCBsANEAgLGIBw+aITMABugEBYwACEyxedgAFwAwTCAgYgXL7oBAyAGyAQFjAA4fJFJ2AA3ACBsIABCJcvOgED4AYIhAUMQLh80QkYADdAICxgAMLli07AALgBAmEBAxAuX3QCBsANEAgLGIBw+aITMABugEBYwACEyxedgAFwAwTCAgYgXL7oBAyAGyAQFjAA4fJFJ2AA3ACBsIABCJcvOgED4AYIhAUMQLh80QkYADdAICxgAMLli07AALgBAmEBAxAuX3QCBsANEAgLGIBw+aITMABugEBYwACEyxedgAFwAwTCAgYgXL7oBAyAGyAQFjAA4fJFJ2AA3ACBsIABCJcvOgED4AYIhAUMQLh80QkYADdAICxgAMLli07AALgBAmEBAxAuX3QCBsANEAgLGIBw+aITMABugEBYwACEyxedgAFwAwTCAgYgXL7oBAyAGyAQFjAA4fJFJ2AA3ACBsIABCJcvOgED4AYIhAUMQLh80Qlc6QQB/7svaWEAAAAASUVORK5CYII=' //Only `png` format
-const nevPrompt = "(deformed, distorted, disfigured:1.3), poorly drawn, bad anatomy, wrong anatomy, extra limb, missing limb, floating limbs, (mutated hands and fingers:1.4), disconnected limbs, mutation, mutated, ugly, disgusting, blurry, amputation, (NSFW:1.25)";
-const activities = [
-    { name: 'With Code', type: ActivityType.Playing },
-    { name: 'Something', type: ActivityType.Listening },
-    { name: 'You', type: ActivityType.Watching }
-    // Add more activities as desired
+const MODEL = "gemini-1.5-flash-latest";
+
+/*
+`BLOCK_NONE`  -  Always show regardless of probability of unsafe content
+`BLOCK_ONLY_HIGH`  -  Block when high probability of unsafe content
+`BLOCK_MEDIUM_AND_ABOVE`  -  Block when medium or high probability of unsafe content
+`BLOCK_LOW_AND_ABOVE`  -  Block when low, medium or high probability of unsafe content
+`HARM_BLOCK_THRESHOLD_UNSPECIFIED`  -  Threshold is unspecified, block using default threshold
+*/
+const safetySettings = [
+  {
+    category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+    threshold: HarmBlockThreshold.BLOCK_NONE,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+    threshold: HarmBlockThreshold.BLOCK_NONE,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+    threshold: HarmBlockThreshold.BLOCK_NONE,
+  },
+  {
+    category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+    threshold: HarmBlockThreshold.BLOCK_NONE,
+  },
 ];
+
+const generationConfig = {
+  temperature: 1.0
+};
+
+const defaultResponseFormat = config.defaultResponseFormat;
+const defaultImgModel = config.defaultImgModel;
+const hexColour = config.hexColour;
+const activities = config.activities.map(activity => ({
+  name: activity.name,
+  type: ActivityType[activity.type]
+}));
+const defaultPersonality = config.defaultPersonality;
+const defaultServerSettings = config.defaultServerSettings;
+const workInDMs = config.workInDMs;
+const shouldDisplayPersonalityButtons = config.shouldDisplayPersonalityButtons;
+const SEND_RETRY_ERRORS_TO_DISCORD = config.SEND_RETRY_ERRORS_TO_DISCORD;
+
+import {
+  speechGen,
+  musicGen,
+  generateWithPlayground,
+  generateImage,
+  generateWithDalle3,
+  imgModels,
+  imageModelFunctions
+} from './tools/generators.js';
+
+import { function_declarations, manageToolCall, processFunctionCallsNames } from './tools/function_calling.js';
+
+import {
+  delay,
+  retryOperation,
+  filterPrompt,
+  enhancePrompt
+} from './tools/others.js';
 
 // <==========>
 
@@ -145,110 +263,18 @@ const activities = [
 
 // <=====[Register Commands And Activities]=====>
 
+import { commands } from './commands.js';
+
 let activityIndex = 0;
 client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}!`);
 
-  const commands = [
-    new SlashCommandBuilder()
-      .setName('imagine')
-      .setDescription('Generate an image based on a prompt using a selected model.')
-      .addStringOption(option =>
-        option.setName('model')
-          .setDescription('The image generation model to use.')
-          .setRequired(true)
-          .addChoices(
-            { name: 'SD-XL', value: 'SD-XL' },
-            { name: 'Playground', value: 'Playground' },
-            { name: 'Anime', value: 'Anime' },
-            { name: 'Stable-Cascade', value: 'Stable-Cascade'},
-            { name: 'Redmond', value: 'Redmond' },
-            { name: 'DallE-XL', value: 'DallE-XL' },
-            { name: 'Juggernaut', value: 'Juggernaut' },
-            //{ name: 'Dall-e-3', value: 'Dall-e-3' },
-            { name: 'SD-XL-Alt', value: 'SD-XL-Alt' }
-          )
-      )
-      .addStringOption(option =>
-        option.setName('prompt')
-          .setDescription('The prompt to generate the image from.')
-          .setRequired(true)
-      ),
-    new SlashCommandBuilder()
-      .setName('respondtoall')
-      .setDescription('Enables the bot to always respond to all messages in this channel.'),
-    new SlashCommandBuilder()
-      .setName('clear')
-      .setDescription('Clears the conversation history.'),
-    new SlashCommandBuilder()
-      .setName('settings')
-      .setDescription('Opens Up Settings.'),
-    new SlashCommandBuilder()
-      .setName('dashboard')
-      .setDescription('Opens Up The Dashboard.'),
-    new SlashCommandBuilder()
-      .setName('speech')
-      .setDescription('Generate speech from text.')
-      .addStringOption(option =>
-        option.setName('language')
-          .setDescription('The language to use.')
-          .setRequired(true)
-          .addChoices(
-            { name: 'English', value: 'English' },
-            { name: 'Spanish', value: 'Spanish' },
-            { name: 'French', value: 'French' },
-            { name: 'Chinese', value: 'Chinese' },
-            { name: 'Korean', value: 'Korean' },
-            { name: 'Japanese', value: 'Japanese' }
-          )
-      )
-      .addStringOption(option =>
-        option.setName('prompt')
-          .setDescription('The text prompt to generate the speech from.')
-          .setRequired(true)
-      ),
-    new SlashCommandBuilder()
-      .setName('music')
-      .setDescription('Generate an music based on a prompt.')
-      .addStringOption(option =>
-        option.setName('prompt')
-          .setDescription('The prompt to generate the music from.')
-          .setRequired(true)
-      ),
-    new SlashCommandBuilder()
-      .setName('video')
-      .setDescription('Generate an video based on a prompt.')
-      .addStringOption(option =>
-        option.setName('prompt')
-          .setDescription('The prompt to generate the video from.')
-          .setRequired(true)
-      ),
-    new SlashCommandBuilder()
-      .setName('blacklist')
-      .setDescription('Blacklists a user from using certain interactions')
-      .addUserOption(option =>
-        option.setName('user')
-          .setDescription('The user to blacklist')
-          .setRequired(true)
-      ),
-    new SlashCommandBuilder()
-      .setName('whitelist')
-      .setDescription('Removes a user from the blacklist')
-      .addUserOption(option =>
-        option.setName('user')
-          .setDescription('The user to whitelist')
-          .setRequired(true)
-      ),
-  ].map(command => command.toJSON());
-
   const rest = new REST({ version: '10' }).setToken(token);
-
   try {
     console.log('Started refreshing application (/) commands.');
 
     await rest.put(
-      Routes.applicationCommands(client.user.id),
-      { body: commands },
+      Routes.applicationCommands(client.user.id), { body: commands },
     );
 
     console.log('Successfully reloaded application (/) commands.');
@@ -278,47 +304,54 @@ client.once('ready', async () => {
 
 client.on('messageCreate', async (message) => {
   try {
-    if (message.author.bot) return;
+    if (message.author.id === client.user.id) return;
 
     const isDM = message.channel.type === ChannelType.DM;
     const mentionPattern = new RegExp(`^<@!?${client.user.id}>(?:\\s+)?(generate|imagine)`, 'i');
     const startsWithPattern = /^generate|^imagine/i;
     const command = message.content.match(mentionPattern) || message.content.match(startsWithPattern);
 
-    // Decide if the bot should respond based on channel conditions
     const shouldRespond = (
+      workInDMs && isDM ||
       alwaysRespondChannels[message.channelId] ||
-      message.mentions.users.has(client.user.id) && !isDM ||
-      activeUsersInChannels[message.channelId]?.[message.author.id] || isDM
+      (message.mentions.users.has(client.user.id) && !isDM) ||
+      activeUsersInChannels[message.channelId]?.[message.author.id]
     );
 
     if (shouldRespond) {
       if (message.guild) {
         initializeBlacklistForGuild(message.guild.id);
         if (blacklistedUsers[message.guild.id].includes(message.author.id)) {
-          return message.reply({ content: 'You are blacklisted and cannot use this bot.' });
+          const embed = new EmbedBuilder()
+            .setColor(0xFF0000)
+            .setTitle('Blacklisted')
+            .setDescription('You are blacklisted and cannot use this bot.');
+          return message.reply({ embeds: [embed] });
         }
       }
       if (command) {
-        // Extract the command name and the prompt
         const prompt = message.content.slice(command.index + command[0].length).trim();
         if (prompt) {
           await genimg(prompt, message);
         } else {
-          await message.channel.send("> `Please provide a valid prompt.`");
+          const embed = new EmbedBuilder()
+            .setColor(0x00FFFF)
+            .setTitle('Invalid Prompt')
+            .setDescription('Please provide a valid prompt.');
+          await message.channel.send({ embeds: [embed] });
         }
       } else if (activeRequests.has(message.author.id)) {
-        await message.reply('> `Please wait until your previous action is complete.`');
-      } else if (message.attachments.size > 0 && hasImageAttachments(message)) {
-        await handleImageMessage(message);
-      } else if (message.attachments.size > 0 && hasTextFileAttachments(message)) {
-        await handleTextFileMessage(message);
+        const embed = new EmbedBuilder()
+          .setColor(0xFFFF00)
+          .setTitle('Request In Progress')
+          .setDescription('Please wait until your previous action is complete.');
+        await message.reply({ embeds: [embed] });
       } else {
         await handleTextMessage(message);
       }
     }
   } catch (error) {
-    console.error('Error processing the message:', error.message);
+    console.error('Error processing the message:', error);
     if (activeRequests.has(message.author.id)) {
       activeRequests.delete(message.author.id);
     }
@@ -327,188 +360,216 @@ client.on('messageCreate', async (message) => {
 
 client.on('interactionCreate', async (interaction) => {
   try {
-    if (!interaction.isCommand()) return;
-    switch (interaction.commandName) {
-      case 'respondtoall':
-        await handleRespondToAllCommand(interaction);
-        break;
-      case 'whitelist':
-        await handleWhitelistCommand(interaction);
-        break;
-      case 'blacklist':
-        await handleBlacklistCommand(interaction);
-        break;
-      case 'imagine':
-        await handleImagineCommand(interaction);
-        break;
-      case 'clear':
-        const serverChatHistoryEnabled = interaction.guild ? serverSettings[interaction.guild.id]?.serverChatHistory : false;
-        if (!serverChatHistoryEnabled) {
-          await clearChatHistory(interaction);
-        } else {
-          await interaction.reply("Clearing chat history is not enabled for this server, Server-Wide chat history is active.");
-        }
-        break;
-      case 'speech':
-        await handleSpeechCommand(interaction);
-        break;
-      case 'settings':
-        await showSettings(interaction);
-        break;
-      case 'dashboard':
-        await showDashboard(interaction);
-        break;
-      case 'video':
-        await handleVideoCommand(interaction);
-        break;
-      case 'music':
-        await handleMusicCommand(interaction);
-        break;
-      default:
-        console.log(`Unknown command: ${interaction.commandName}`);
-        break;
-    }
-  } catch (error) {
-    console.error('Error handling command:', error.message);
-  }
-});
-
-client.on('interactionCreate', async (interaction) => {
-  try {
-    if (interaction.isButton()) {
-      if (interaction.guild) {
-        initializeBlacklistForGuild(interaction.guild.id);
-        if (blacklistedUsers[interaction.guild.id].includes(interaction.user.id)) {
-          return interaction.reply({ content: 'You are blacklisted and cannot use this interaction.', ephemeral: true });
-        }
-      }
-      switch (interaction.customId) {
-        case 'server-chat-history':
-          await toggleServerWideChatHistory(interaction);
-          break;
-        case 'clear-server':
-          await clearServerChatHistory(interaction);
-          break;
-        case 'settings-save-buttons':
-          await toggleSettingSaveButton(interaction);
-          break;
-        case 'custom-server-personality':
-          await serverPersonality(interaction);
-          break;
-        case 'toggle-server-personality':
-          await toggleServerPersonality(interaction);
-          break;
-        case 'download-server-conversation':
-          await downloadServerConversation(interaction);
-          break;
-        case 'response-server-mode':
-          await toggleServerPreference(interaction);
-          break;
-        case 'toggle-response-server-mode':
-          await toggleServerResponsePreference(interaction);
-          break;
-        case 'settings':
-          await showSettings(interaction);
-          break;
-        case 'clear':
-          const serverChatHistoryEnabled = interaction.guild ? serverSettings[interaction.guild.id]?.serverChatHistory : false;
-          if (!serverChatHistoryEnabled) {
-            await clearChatHistory(interaction);
-          } else {
-            await interaction.reply({content: "Clearing chat history is not enabled for this server, Server-Wide chat history is active.", ephemeral: true});
-          }
-          break;
-        case 'always-respond':
-          await alwaysRespond(interaction);
-          break;
-        case 'custom-personality':
-          const serverCustomEnabled = interaction.guild ? serverSettings[interaction.guild.id]?.customServerPersonality : false;
-          if (!serverCustomEnabled) {
-            await setCustomPersonality(interaction);
-          } else {
-            await interaction.reply({content: "Custom personality is not enabled for this server, Server-Wide personality is active.", ephemeral: true});
-          }
-          break;
-        case 'remove-personality':
-          const isServerEnabled = interaction.guild ? serverSettings[interaction.guild.id]?.customServerPersonality : false;
-          if (!isServerEnabled) {
-            await removeCustomPersonality(interaction);
-          } else {
-            await interaction.reply({content: "Custom personality is not enabled for this server, Server-Wide personality is active.", ephemeral: true});
-          }
-          break;
-        case 'generate-image':
-          await handleGenerateImageButton(interaction);
-          break;
-        case 'change-image-model':
-          await changeImageModel(interaction);
-          break;
-        case 'toggle-prompt-enhancer':
-          await togglePromptEnhancer(interaction);
-          break;
-        case 'change-image-resolution':
-          await changeImageResolution(interaction);
-          break;
-        case 'toggle-response-mode':
-          const serverResponsePreferenceEnabled = interaction.guild ? serverSettings[interaction.guild.id]?.serverResponsePreference : false;
-          if (!serverResponsePreferenceEnabled) {
-            await toggleUserPreference(interaction);
-          } else {
-            await interaction.reply({content: "Toggling Response Mode is not enabled for this server, Server-Wide Response Mode is active.", ephemeral: true});
-          }
-          break;
-       case 'toggle-url-mode':
-          await toggleUrlUserPreference(interaction);
-          break;
-        case 'generate-speech':
-          await processSpeechGet(interaction);
-          break;
-        case 'generate-music':
-          await processMusicGet(interaction);
-          break;
-        case 'generate-video':
-          await processVideoGet(interaction);
-          break;
-        case 'change-speech-model':
-          await changeSpeechModel(interaction);
-          break;
-        case 'download-conversation':
-          await downloadConversation(interaction);
-          break;
-        case 'download_message':
-          await downloadMessage(interaction);
-          break;
-        case 'exit':
-          await interaction.message.delete();
-          break;
-        default:
-          if (interaction.customId.startsWith('select-speech-model-')) {
-            const selectedModel = interaction.customId.replace('select-speech-model-', '');
-            await handleSpeechSelectModel(interaction, selectedModel);
-          }
-      }
+    if (interaction.isCommand()) {
+      await handleCommandInteraction(interaction);
+    } else if (interaction.isButton()) {
+      await handleButtonInteraction(interaction);
     } else if (interaction.isModalSubmit()) {
       await handleModalSubmit(interaction);
+    } else if (interaction.isStringSelectMenu()) {
+      await handleSelectMenuInteraction(interaction);
     }
   } catch (error) {
-    console.error('Error handling command:', error.message);
+    console.error('Error handling interaction:', error.message);
   }
 });
 
-client.on('interactionCreate', async (interaction) => {
-  try {
-    if (!interaction.isStringSelectMenu()) return;
-    if (interaction.customId === 'select-image-model') {
-      const selectedModel = interaction.values[0];
-      await handleImageSelectModel(interaction, selectedModel);
-    } else if (interaction.customId === 'select-image-resolution') {
-      const selectedResolution = interaction.values[0];
-      await handleImageSelectResolution(interaction, selectedResolution);
-    }
-  } catch (error) {
-    console.error('Error handling select menu interaction:', error.message);
+async function handleCommandInteraction(interaction) {
+  if (!interaction.isCommand()) return;
+
+  const commandHandlers = {
+    respond_to_all: handleRespondToAllCommand,
+    toggle_channel_chat_history: toggleChannelChatHistory,
+    whitelist: handleWhitelistCommand,
+    blacklist: handleBlacklistCommand,
+    imagine: handleImagineCommand,
+    clear_memory: handleClearMemoryCommand,
+    speech: handleSpeechCommand,
+    settings: showSettings,
+    server_settings: showDashboard,
+    music: handleMusicCommand,
+    status: handleStatusCommand
+  };
+
+  const handler = commandHandlers[interaction.commandName];
+  if (handler) {
+    await handler(interaction);
+  } else {
+    console.log(`Unknown command: ${interaction.commandName}`);
   }
-});
+}
+
+async function handleButtonInteraction(interaction) {
+  if (!interaction.isButton()) return;
+
+  if (interaction.guild) {
+    initializeBlacklistForGuild(interaction.guild.id);
+    if (blacklistedUsers[interaction.guild.id].includes(interaction.user.id)) {
+      const embed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Blacklisted')
+        .setDescription('You are blacklisted and cannot use this interaction.');
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+  }
+
+  const buttonHandlers = {
+    'server-chat-history': toggleServerWideChatHistory,
+    'clear-server': clearServerChatHistory,
+    'settings-save-buttons': toggleSettingSaveButton,
+    'custom-server-personality': serverPersonality,
+    'toggle-server-personality': toggleServerPersonality,
+    'download-server-conversation': downloadServerConversation,
+    'response-server-mode': toggleServerPreference,
+    'toggle-response-server-mode': toggleServerResponsePreference,
+    'settings': showSettings,
+    'back_to_main_settings': editShowSettings,
+    'clear-memory': handleClearMemoryCommand,
+    'always-respond': alwaysRespond,
+    'custom-personality': handleCustomPersonalityCommand,
+    'remove-personality': handleRemovePersonalityCommand,
+    'generate-image': handleGenerateImageButton,
+    'change-image-model': changeImageModel,
+    'toggle-prompt-enhancer': togglePromptEnhancer,
+    'change-image-resolution': changeImageResolution,
+    'toggle-response-mode': handleToggleResponseMode,
+    'generate-speech': processSpeechGet,
+    'generate-music': processMusicGet,
+    'change-speech-model': changeSpeechModel,
+    'download-conversation': downloadConversation,
+    'download_message': downloadMessage,
+    'general-settings': handleSubButtonInteraction,
+    'image-settings': handleSubButtonInteraction,
+    'speech-settings': handleSubButtonInteraction,
+    'music-settings': handleSubButtonInteraction,
+  };
+
+  for (const [key, handler] of Object.entries(buttonHandlers)) {
+    if (interaction.customId.startsWith(key)) {
+      if (key === 'select-speech-model-') {
+        const selectedModel = interaction.customId.replace('select-speech-model-', '');
+        await handleSpeechSelectModel(interaction, selectedModel);
+      } else {
+        await handler(interaction);
+      }
+      return;
+    }
+  }
+
+  if (interaction.customId.startsWith('delete_message-')) {
+    const msgId = interaction.customId.replace('delete_message-', '');
+    await handleDeleteMessageInteraction(interaction, msgId);
+  }
+}
+
+async function handleDeleteMessageInteraction(interaction, msgId) {
+  const userId = interaction.user.id;
+  const userChatHistory = chatHistories[userId];
+  const channel = interaction.channel;
+  const message = channel ? (await channel.messages.fetch(msgId).catch(() => false)) : false;
+
+  if (userChatHistory) {
+    if (userChatHistory[msgId]) {
+      delete userChatHistory[msgId];
+      await deleteMsg();
+    } else {
+      try {
+        const replyingTo = message ? (message.reference ? (await message.channel.messages.fetch(message.reference.messageId)).author.id : 0) : 0;
+        if (userId === replyingTo) {
+          await deleteMsg();
+        } else {
+          const embed = new EmbedBuilder()
+            .setColor(0xFF0000)
+            .setTitle('Not For You')
+            .setDescription('This button is not meant for you.');
+          return interaction.reply({ embeds: [embed], ephemeral: true });
+        }
+      } catch (error) {}
+    }
+  }
+
+  async function deleteMsg() {
+    await interaction.message.delete()
+      .catch('Error deleting interaction message: ', console.error);
+    
+    if (channel) {
+      if (message) {
+        message.delete().catch(() => {});
+      }
+    }
+  }
+}
+
+async function handleSelectMenuInteraction(interaction) {
+  if (!interaction.isStringSelectMenu()) return;
+
+  const selectMenuHandlers = {
+    'select-image-model': handleImageSelectModel,
+    'select-image-resolution': handleImageSelectResolution
+  };
+
+  const handler = selectMenuHandlers[interaction.customId];
+  if (handler) {
+    const selectedValue = interaction.values[0];
+    await handler(interaction, selectedValue);
+  }
+}
+
+async function handleClearMemoryCommand(interaction) {
+  const serverChatHistoryEnabled = interaction.guild ? serverSettings[interaction.guild.id]?.serverChatHistory : false;
+  if (!serverChatHistoryEnabled) {
+    await clearChatHistory(interaction);
+  } else {
+    const embed = new EmbedBuilder()
+      .setColor(0xFF5555)
+      .setTitle('Feature Disabled')
+      .setDescription('Clearing chat history is not enabled for this server, Server-Wide chat history is active.');
+    await interaction.reply({ embeds: [embed] });
+  }
+}
+
+async function handleCustomPersonalityCommand(interaction) {
+  const serverCustomEnabled = interaction.guild ? serverSettings[interaction.guild.id]?.customServerPersonality : false;
+  if (!serverCustomEnabled) {
+    await setCustomPersonality(interaction);
+  } else {
+    const embed = new EmbedBuilder()
+      .setColor(0xFF5555)
+      .setTitle('Feature Disabled')
+      .setDescription('Custom personality is not enabled for this server, Server-Wide personality is active.');
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+  }
+}
+
+async function handleRemovePersonalityCommand(interaction) {
+  const isServerEnabled = interaction.guild ? serverSettings[interaction.guild.id]?.customServerPersonality : false;
+  if (!isServerEnabled) {
+    await removeCustomPersonality(interaction);
+  } else {
+    const embed = new EmbedBuilder()
+      .setColor(0xFF5555)
+      .setTitle('Feature Disabled')
+      .setDescription('Custom personality is not enabled for this server, Server-Wide personality is active.');
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+  }
+}
+
+async function handleToggleResponseMode(interaction) {
+  const serverResponsePreferenceEnabled = interaction.guild ? serverSettings[interaction.guild.id]?.serverResponsePreference : false;
+  if (!serverResponsePreferenceEnabled) {
+    await toggleUserResponsePreference(interaction);
+  } else {
+    const embed = new EmbedBuilder()
+      .setColor(0xFF5555)
+      .setTitle('Feature Disabled')
+      .setDescription('Toggling Response Mode is not enabled for this server, Server-Wide Response Mode is active.');
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+  }
+}
+
+async function editShowSettings(interaction) {
+  await showSettings(interaction, true);
+}
 
 // <==========>
 
@@ -516,129 +577,246 @@ client.on('interactionCreate', async (interaction) => {
 
 // <=====[Messages Handling]=====>
 
-async function handleImageMessage(message) {
-  const imageAttachments = message.attachments.filter((attachment) =>
-    attachment.contentType?.startsWith('image/')
-  );
-
-  let messageContent = message.content.replace(new RegExp(`<@!?${client.user.id}>`), '').trim();
-
-  if (imageAttachments.size > 0) {
-    const visionModel = await genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest" }, { apiVersion: 'v1beta' });
-    const imageParts = await Promise.all(
-      imageAttachments.map(async attachment => {
-        const response = await fetch(attachment.url);
-        const buffer = await response.buffer();
-
-        if (buffer.length > 3 * 1024 * 1024) {
-          try {
-
-            const compressedBuffer = await compressImage(buffer);
-
-            if (compressedBuffer.length > 3.9 * 1024 * 1024) {
-              throw new Error('Image too large after compression.');
-            }
-
-            return { inlineData: { data: compressedBuffer.toString('base64'), mimeType: 'image/jpeg' } };
-          } catch (error) {
-            console.error('Compression error:', error);
-            await message.reply('The image is too large for Gemini to process even after attempting to compress it.');
-            throw error;
-          }
-        } else {
-          return { inlineData: { data: buffer.toString('base64'), mimeType: attachment.contentType } };
-        }
-      })
-    );
-    const isServerChatHistoryEnabled = message.guild ? serverSettings[message.guild.id]?.serverChatHistory : false;
-    const chat = visionModel.startChat({
-      history: isServerChatHistoryEnabled ? getHistory(message.guild.id) : getHistory(message.author.id),
-      safetySettings,
-    });
-
-    const botMessage = await message.reply({ content: 'Analyzing the image(s) with your text prompt...' });
-    await handleModelResponse(botMessage, async () => chat.sendMessageStream([messageContent, ...imageParts]), message);
-  }
-}
-
-async function handleTextFileMessage(message) {
-  let messageContent = message.content.replace(new RegExp(`<@!?${client.user.id}>`), '').trim();
-
-  const supportedMimeTypes = [
-    'application/pdf', 'text/plain', 'text/html', 'text/css',
-    'application/javascript', 'application/json', 'text/x-python',
-    'application/x-yaml', 'text/markdown', 'application/xml'
-  ];
-
-  const supportedFileExtensions = [
-    'md', 'yaml', 'yml', 'xml', 'env', 'sh', 'bat', 'rb', 'c', 'cpp', 'cc',
-    'cxx', 'h', 'hpp', 'java'
-  ];
-
-  // Filter attachments for supported types and extensions
-  const fileAttachments = message.attachments.filter((attachment) => {
-    const fileMimeType = attachment.contentType?.split(';')[0].trim();
-    const fileExtension = attachment.name.split('.').pop().toLowerCase();
-    return supportedMimeTypes.includes(fileMimeType) || supportedFileExtensions.includes(fileExtension);
-  });
-
-  if (fileAttachments.size > 0) {
-    let botMessage = await message.reply({ content: '> `Processing your document(s)...`' });
-    let formattedMessage = messageContent;
-
-    for (const [attachmentId, attachment] of fileAttachments) {
-      let extractedText = await (attachment.contentType?.startsWith('application/pdf') ?
-        extractTextFromPDF(attachment.url) :
-        fetchTextContent(attachment.url));
-
-      formattedMessage += `\n\n[${attachment.name}] File Content:\n"${extractedText}"`;
-    }
-
-    // Load the text model and handle the conversation
-    const isServerChatHistoryEnabled = message.guild ? serverSettings[message.guild.id]?.serverChatHistory : false;
-    const model = await genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest" }, { apiVersion: 'v1beta' });
-    const chat = model.startChat({
-      history: isServerChatHistoryEnabled ? getHistory(message.guild.id) : getHistory(message.author.id),
-      safetySettings,
-    });
-
-    await handleModelResponse(botMessage, () => chat.sendMessageStream(formattedMessage), message);
-  }
-}
-
 async function handleTextMessage(message) {
-  let botMessage;
+  const botId = client.user.id;
   const userId = message.author.id;
-  let messageContent = message.content.replace(new RegExp(`<@!?${client.user.id}>`), '').trim();
-  if (messageContent === '') {
-    const botMessage = await message.reply("It looks like you didn't say anything. What would you like to talk about?");
+  const guildId = message.guild?.id;
+  const channelId = message.channel.id;
+  let messageContent = message.content.replace(new RegExp(`<@!?${botId}>`), '').trim();
+
+  if (messageContent === '' && !(message.attachments.size > 0 && hasSupportedAttachments(message))) {
+    const embed = new EmbedBuilder()
+      .setColor(0x00FFFF)
+      .setTitle('Empty Message')
+      .setDescription("It looks like you didn't say anything. What would you like to talk about?");
+    const botMessage = await message.reply({ embeds: [embed] });
     await addSettingsButton(botMessage);
     return;
   }
-  const instructions = message.guild ?
-    (serverSettings[message.guild.id]?.customServerPersonality && customInstructions[message.guild.id] ?
-      customInstructions[message.guild.id] :
-      customInstructions[message.author.id]) :
-    customInstructions[message.author.id];
+  message.channel.sendTyping();
+  const typingInterval = setInterval(() => {
+    message.channel.sendTyping();
+  }, 4000);
+  setTimeout(() => {
+    clearInterval(typingInterval);
+  }, 120000);
+  let botMessage = false;
+  let parts;
+  try {
+    if (SEND_RETRY_ERRORS_TO_DISCORD) {
+      clearInterval(typingInterval);
+      const updateEmbedDescription = (textAttachmentStatus, imageAttachmentStatus, finalText) => {
+        return `Let me think...\n\n- ${textAttachmentStatus}: Text Attachment Check\n- ${imageAttachmentStatus}: Media Attachment Check\n${finalText || ''}`;
+      };
+  
+      const embed = new EmbedBuilder()
+        .setColor(0x00FFFF)
+        .setTitle('Processing')
+        .setDescription(updateEmbedDescription('[🔁]', '[🔁]'));
+      botMessage = await message.reply({ embeds: [embed] });
+  
+      messageContent = await extractFileText(message, messageContent);
+      embed.setDescription(updateEmbedDescription('[☑️]', '[🔁]'));
+      await botMessage.edit({ embeds: [embed] });
+  
+      parts = await processPromptAndMediaAttachments(messageContent, message);
+      embed.setDescription(updateEmbedDescription('[☑️]', '[☑️]', '### All checks done. Waiting for the response...'));
+      await botMessage.edit({ embeds: [embed] });
+    } else {
+      messageContent = await extractFileText(message, messageContent);
+      parts = await processPromptAndMediaAttachments(messageContent, message);
+    }
+  } catch (error) {
+    return console.error('Error initialising message', error);
+  }
 
-  let formattedMessage = messageContent;
-
-  const urls = extractUrls(messageContent);
-  activeRequests.add(userId);
-  const videoTranscripts = {};
-  if (urls.length > 0 && getUrlUserPreference(userId) === "ON") {
-    botMessage = await message.reply('Fetching content from the URLs...');
-    await handleUrlsInMessage(urls, formattedMessage, botMessage, message);
+  let instructions;
+  if (guildId) {
+    if (channelWideChatHistory[channelId]) {
+      instructions = customInstructions[channelId];
+    } else if (serverSettings[guildId]?.customServerPersonality && customInstructions[guildId]) {
+      instructions = customInstructions[guildId];
+    } else {
+      instructions = customInstructions[userId];
+    }
   } else {
-    botMessage = await message.reply('> `Let me think...`');
-    const isServerChatHistoryEnabled = message.guild ? serverSettings[message.guild.id]?.serverChatHistory : false;
-    // Only include instructions if they are set.
-    const model = await genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest", systemInstruction: { role: "system", parts: [{ text: instructions ? instructions : "You are Gemini Pro, a large language model trained by Google, based on the Gemini 1.5 Pro architecture. You are chatting with the user via the Gemini Discord bot. This means most of the time your lines should be a sentence or two, unless the user's request requires reasoning or long-form outputs. Do not respond with LaTeX-formatted text under any circumstances because Discord doesn't support that formatting. Never use emojis, unless explicitly asked to." }] } }, { apiVersion: 'v1beta' });
-    const chat = model.startChat({
-      history: isServerChatHistoryEnabled ? getHistory(message.guild.id) : getHistory(message.author.id),
-      safetySettings,
-    });
-    await handleModelResponse(botMessage, () => chat.sendMessageStream(formattedMessage), message);
+    instructions = customInstructions[userId];
+  }
+
+  activeRequests.add(userId);
+
+  let infoStr = '';
+  if (guildId) {
+    const userInfo = {
+      username: message.author.username,
+      displayName: message.author.displayName
+    };
+    infoStr = `\nYou are currently engaging with users in the ${message.guild.name} Discord server.\n\n## Current User Information\nUsername: \`${userInfo.username}\`\nDisplay Name: \`${userInfo.displayName}\``;
+  }
+
+  const isServerChatHistoryEnabled = guildId ? serverSettings[guildId]?.serverChatHistory : false;
+  const isChannelChatHistoryEnabled = guildId ? channelWideChatHistory[channelId] : false;
+  const finalInstructions = isServerChatHistoryEnabled ? instructions + infoStr : instructions;
+  const historyId = isChannelChatHistoryEnabled ? (isServerChatHistoryEnabled ? guildId : channelId) : userId;
+
+  const model = await genAI.getGenerativeModel({
+    model: MODEL,
+    systemInstruction: { role: "system", parts: [{ text: finalInstructions || defaultPersonality }] },
+    generationConfig,
+    tools: { functionDeclarations: function_declarations }
+  });
+
+  const chat = model.startChat({
+    history: getHistory(historyId),
+    safetySettings,
+  });
+
+  await handleModelResponse(botMessage, chat, parts, message, typingInterval, historyId);
+}
+
+function hasSupportedAttachments(message) {
+  const supportedFileExtensions = [ '.html', '.js', '.css', '.json', '.xml', '.csv', '.py', '.java', '.sql', '.log', '.md', '.txt', '.pdf', '.docx' ];
+
+  return message.attachments.some((attachment) => {
+    const contentType = (attachment.contentType || "").toLowerCase();
+    const fileExtension = path.extname(attachment.name) || '';
+    return (
+      (contentType.startsWith('image/') && contentType !== 'image/gif') ||
+      contentType.startsWith('audio/') ||
+      contentType.startsWith('video/') ||
+      supportedFileExtensions.includes(fileExtension)
+    );
+  });
+}
+
+async function downloadFile(url, filePath) {
+  const writer = fs.createWriteStream(filePath);
+  const response = await axios({
+    url,
+    method: 'GET',
+    responseType: 'stream',
+  });
+  response.data.pipe(writer);
+  return new Promise((resolve, reject) => {
+    writer.on('finish', resolve);
+    writer.on('error', reject);
+  });
+}
+
+function sanitizeFileName(fileName) {
+  return fileName
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-') // replace non-lowercase alphanumeric and dashes with dashes
+    .replace(/^-+|-+$/g, ''); // remove leading and trailing dashes
+}
+
+async function processPromptAndMediaAttachments(prompt, message) {
+  const attachments = JSON.parse(JSON.stringify(Array.from(message.attachments.values())));
+
+  let parts = [{ text: prompt }];
+
+  if (attachments.length > 0) {
+    const validAttachments = attachments.filter(
+      (attachment) => {
+        const contentType = attachment.contentType.toLowerCase();
+        return (contentType.startsWith('image/') && contentType !== 'image/gif') ||
+          contentType.startsWith('audio/') ||
+          contentType.startsWith('video/');
+      }
+    );
+
+    if (validAttachments.length > 0) {
+      const attachmentParts = await Promise.all(
+        validAttachments.map(async (attachment) => {
+          const sanitizedFileName = sanitizeFileName(attachment.name);
+          const filePath = path.join(__dirname, sanitizedFileName);
+
+          try {
+            // Download the file
+            await downloadFile(attachment.url, filePath);
+
+            // Upload the downloaded file
+            const uploadResult = await fileManager.uploadFile(filePath, {
+              mimeType: attachment.contentType,
+              displayName: sanitizedFileName,
+            });
+            const name = uploadResult.file.name;
+            if (name === null) {
+              throw new Error(`Unable to extract file name from upload result: ${nameField}`);
+            }
+
+            // Check if the file is a video and wait for its state to be 'ACTIVE'
+            if (attachment.contentType.startsWith('video/')) {
+              let file = await fileManager.getFile(name);
+              while (file.state === FileState.PROCESSING) {
+                process.stdout.write(".");
+                await new Promise((resolve) => setTimeout(resolve, 10_000));
+                file = await fileManager.getFile(name);
+              }
+
+              if (file.state === FileState.FAILED) {
+                throw new Error(`Video processing failed for ${sanitizedFileName}.`);
+              }
+            }
+
+            // Delete the local file
+            fs.unlinkSync(filePath);
+
+            return {
+              fileData: {
+                mimeType: attachment.contentType,
+                fileUri: uploadResult.file.uri,
+              },
+            };
+          } catch (error) {
+            console.error(`Error processing attachment ${sanitizedFileName}:`, error);
+            if (fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath);
+            }
+            return null;
+          }
+        })
+      );
+
+      parts = [...parts, ...attachmentParts.filter(part => part !== null)];
+    }
+  }
+
+  return parts;
+}
+
+async function extractFileText(message, messageContent) {
+  if (message.attachments.size > 0) {
+    let attachments = Array.from(message.attachments.values());
+    for (const attachment of attachments) {
+      const fileType = path.extname(attachment.name) || '';
+      const fileTypes = [ '.html', '.js', '.css', '.json', '.xml', '.csv', '.py', '.java', '.sql', '.log', '.md', '.txt', '.pdf', '.docx' ];
+
+      if (fileTypes.includes(fileType)) {
+        try {
+          let fileContent = await downloadAndReadFile(attachment.url, fileType);
+          messageContent += `\n\n[\`${attachment.name}\` File Content]:\n\`\`\`\n${fileContent}\n\`\`\``;
+        } catch (error) {
+          console.error(`Error reading file ${attachment.name}: ${error.message}`);
+        }
+      }
+    }
+  }
+  return messageContent;
+}
+
+async function downloadAndReadFile(url, fileType) {
+  let response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to download ${response.statusText}`);
+
+  switch (fileType) {
+    case 'pdf':
+    case 'docx':
+      let buffer = await response.arrayBuffer();
+      const extractor = getTextExtractor();
+      return (await extractor.extractText({ input: buffer, type: 'buffer' }));
+    default:
+      return await response.text();
   }
 }
 
@@ -646,12 +824,33 @@ async function handleTextMessage(message) {
 
 
 
-// <=====[Interaction Reply 1 (Image/Speech Snd Video Gen)]=====>
+// <=====[Interaction Reply 1 (Image And Speech Gen)]=====>
 
 async function handleImagineCommand(interaction) {
   try {
-    const model = interaction.options.getString('model');
+    if (!workInDMs && interaction.channel.type === ChannelType.DM) {
+      const embed = new EmbedBuilder()
+        .setColor(hexColour)
+        .setTitle('DMs Disabled')
+        .setDescription('DM interactions are disabled for this bot.');
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+    if (interaction.guild) {
+      initializeBlacklistForGuild(interaction.guild.id);
+      if (blacklistedUsers[interaction.guild.id].includes(interaction.user.id)) {
+        const embed = new EmbedBuilder()
+          .setColor(hexColour)
+          .setTitle('Blacklisted')
+          .setDescription('You are blacklisted and cannot use this interaction.');
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+    }
     const prompt = interaction.options.getString('prompt');
+    const model = interaction.options.getString('model');
+    const resolution = interaction.options.getString('resolution');
+    if (resolution) {
+      userPreferredImageResolution[interaction.user.id] = resolution;
+    }
     await genimgslash(prompt, model, interaction);
   } catch (error) {
     console.log(error.message);
@@ -659,75 +858,103 @@ async function handleImagineCommand(interaction) {
 }
 
 async function handleSpeechCommand(interaction) {
-  const generatingMsg = await interaction.reply({ content: `${interaction.user}, generating your speech, please wait... 💽` });
   try {
+    if (!workInDMs && interaction.channel.type === ChannelType.DM) {
+      const embed = new EmbedBuilder()
+        .setColor(hexColour)
+        .setTitle('DMs Disabled')
+        .setDescription('DM interactions are disabled for this bot.');
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+    if (interaction.guild) {
+      initializeBlacklistForGuild(interaction.guild.id);
+      if (blacklistedUsers[interaction.guild.id].includes(interaction.user.id)) {
+        const embed = new EmbedBuilder()
+          .setColor(hexColour)
+          .setTitle('Blacklisted')
+          .setDescription('You are blacklisted and cannot use this interaction.');
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+    }
+    const embed = new EmbedBuilder()
+      .setColor(0x00FFFF)
+      .setTitle('Generating Speech')
+      .setDescription(`Generating your speech, please wait... 💽`);
+    await interaction.reply({ embeds: [embed], ephemeral: true });
     const userId = interaction.user.id;
     const text = interaction.options.getString('prompt');
     const language = interaction.options.getString('language');
     const outputUrl = await generateSpeechWithPrompt(text, userId, language);
     if (outputUrl && outputUrl !== 'Output URL is not available.') {
       await handleSuccessfulSpeechGeneration(interaction, text, language, outputUrl);
-      await generatingMsg.delete();
     } else {
-      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong, or the output URL is not available.` });
+      const embed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Error')
+        .setDescription(`Sorry, something went wrong, or the output URL is not available.\n> **Text:**\n\`\`\`\n${text.length > 3900 ? text.substring(0, 3900) + '...' : text}\n\`\`\``);
+      const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed] });
       await addSettingsButton(messageReference);
-      await generatingMsg.delete();
     }
   } catch (error) {
     console.log(error);
     try {
-      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong and the output is not available.` });
+      const embed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Error')
+        .setDescription(`Sorry, something went wrong and the output is not available.\n> **Text:**\n\`\`\`\n${text.length > 3900 ? text.substring(0, 3900) + '...' : text}\n\`\`\``);
+      const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed] });
       await addSettingsButton(messageReference);
-      await generatingMsg.delete();
-    } catch(error) {}
+    } catch (error) {}
   }
 }
 
 async function handleMusicCommand(interaction) {
-  const generatingMsg = await interaction.reply({ content: `${interaction.user}, generating your music, please wait... 🎧` });
   try {
+    if (!workInDMs && interaction.channel.type === ChannelType.DM) {
+      const embed = new EmbedBuilder()
+        .setColor(hexColour)
+        .setTitle('DMs Disabled')
+        .setDescription('DM interactions are disabled for this bot.');
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+    if (interaction.guild) {
+      initializeBlacklistForGuild(interaction.guild.id);
+      if (blacklistedUsers[interaction.guild.id].includes(interaction.user.id)) {
+        const embed = new EmbedBuilder()
+          .setColor(hexColour)
+          .setTitle('Blacklisted')
+          .setDescription('You are blacklisted and cannot use this interaction.');
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+    }
+    const embed = new EmbedBuilder()
+      .setColor(0x00FFFF)
+      .setTitle('Generating Music')
+      .setDescription(`Generating your music, please wait... 🎧`);
+    await interaction.reply({ embeds: [embed], ephemeral: true });
     const userId = interaction.user.id;
     const text = interaction.options.getString('prompt');
     const outputUrl = await generateMusicWithPrompt(text, userId);
     if (outputUrl && outputUrl !== 'Output URL is not available.') {
       await handleSuccessfulMusicGeneration(interaction, text, outputUrl);
-      await generatingMsg.delete();
     } else {
-      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong, or the output URL is not available.` });
+      const embed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Error')
+        .setDescription(`Sorry, something went wrong, or the output URL is not available.\n> **Text:**\n\`\`\`\n${text.length > 3900 ? text.substring(0, 3900) + '...' : text}\n\`\`\``);
+      const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed] });
       await addSettingsButton(messageReference);
-      await generatingMsg.delete();
     }
   } catch (error) {
     console.log(error);
     try {
-      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong and the output is not available.` });
+      const embed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Error')
+        .setDescription(`Sorry, something went wrong and the output is not available.\n> **Text:**\n\`\`\`\n${text.length > 3900 ? text.substring(0, 3900) + '...' : text}\n\`\`\``);
+      const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed] });
       await addSettingsButton(messageReference);
-      await generatingMsg.delete();
-    } catch(error) {}
-  }
-}
-
-async function handleVideoCommand(interaction) {
-  const generatingMsg = await interaction.reply({ content: `${interaction.user}, generating your video, please wait... 📽️` });
-  try {
-    const userId = interaction.user.id;
-    const text = interaction.options.getString('prompt');
-    const outputUrl = await generateVideoWithPrompt(text, userId);
-    if (outputUrl && outputUrl !== 'Output URL is not available.') {
-      await handleSuccessfulVideoGeneration(interaction, text, outputUrl);
-      await generatingMsg.delete();
-    } else {
-      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong, or the output URL is not available.` });
-      await addSettingsButton(messageReference);
-      await generatingMsg.delete();
-    }
-  } catch (error) {
-    console.log(error);
-    try {
-      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong and the output is not available.` });
-      await addSettingsButton(messageReference);
-      await generatingMsg.delete();
-    } catch(error) {}
+    } catch (error) {}
   }
 }
 
@@ -736,13 +963,10 @@ async function handleSuccessfulSpeechGeneration(interaction, text, language, out
     const isGuild = interaction.guild !== null;
     const file = new AttachmentBuilder(outputUrl).setName('speech.wav');
     const embed = new EmbedBuilder()
-      .setColor(0x505050)
+      .setColor(hexColour)
       .setAuthor({ name: `To ${interaction.user.displayName}`, iconURL: interaction.user.displayAvatarURL() })
-      .setDescription(`Here Is Your Generated Speech\n**Prompt:**\n\`\`\`${text}\`\`\``)
-      .addFields(
-        { name: '**Generated by**', value: `\`${interaction.user.displayName}\``, inline: true },
-        { name: '**Language Used:**', value: `\`${language}\``, inline: true }
-      )
+      .setDescription(`Here Is Your Generated Speech\n**Prompt:**\n\`\`\`${text.length > 3900 ? text.substring(0, 3900) + '...' : text}\`\`\``)
+      .addFields({ name: '**Generated by**', value: `\`${interaction.user.displayName}\``, inline: true }, { name: '**Language Used:**', value: `\`${language}\``, inline: true })
       .setTimestamp();
     if (isGuild) {
       embed.setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() || 'https://ai.google.dev/static/site-assets/images/share.png' });
@@ -760,35 +984,10 @@ async function handleSuccessfulMusicGeneration(interaction, text, outputUrl) {
     const isGuild = interaction.guild !== null;
     const file = new AttachmentBuilder(outputUrl).setName('music.mp4');
     const embed = new EmbedBuilder()
-      .setColor(0x505050)
+      .setColor(hexColour)
       .setAuthor({ name: `To ${interaction.user.displayName}`, iconURL: interaction.user.displayAvatarURL() })
-      .setDescription(`Here Is Your Generated Music\n**Prompt:**\n\`\`\`${text}\`\`\``)
-      .addFields(
-        { name: '**Generated by**', value: `\`${interaction.user.displayName}\``, inline: true }
-      )
-      .setTimestamp();
-    if (isGuild) {
-      embed.setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() || 'https://ai.google.dev/static/site-assets/images/share.png' });
-    }
-
-    const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed], files: [file] });
-    await addSettingsButton(messageReference);
-  } catch (error) {
-    console.log(error.message);
-  }
-}
-
-async function handleSuccessfulVideoGeneration(interaction, text, outputUrl) {
-  try {
-    const isGuild = interaction.guild !== null;
-    const file = new AttachmentBuilder(outputUrl).setName('video.mp4');
-    const embed = new EmbedBuilder()
-      .setColor(0x505050)
-      .setAuthor({ name: `To ${interaction.user.displayName}`, iconURL: interaction.user.displayAvatarURL() })
-      .setDescription(`Here Is Your Generated Video\n**Prompt:**\n\`\`\`${text}\`\`\``)
-      .addFields(
-        { name: '**Generated by**', value: `\`${interaction.user.displayName}\``, inline: true }
-      )
+      .setDescription(`Here Is Your Generated Music\n**Prompt:**\n\`\`\`${text.length > 3900 ? text.substring(0, 3900) + '...' : text}\`\`\``)
+      .addFields({ name: '**Generated by**', value: `\`${interaction.user.displayName}\``, inline: true })
       .setTimestamp();
     if (isGuild) {
       embed.setFooter({ text: interaction.guild.name, iconURL: interaction.guild.iconURL() || 'https://ai.google.dev/static/site-assets/images/share.png' });
@@ -854,43 +1053,22 @@ async function processMusicGet(interaction) {
   await interaction.showModal(modal);
 }
 
-async function processVideoGet(interaction) {
-  const modal = new ModalBuilder()
-    .setCustomId('text-video-modal')
-    .setTitle('Input your text');
-
-  const textInput = new TextInputBuilder()
-    .setCustomId('text-video-input')
-    .setLabel("What's your text?")
-    .setStyle(TextInputStyle.Paragraph)
-    .setMinLength(10)
-    .setMaxLength(800);
-
-  modal.addComponents(new ActionRowBuilder().addComponents(textInput));
-
-  await interaction.showModal(modal);
-}
-
 async function genimg(prompt, message) {
   const generatingMsg = await message.reply({ content: `Generating your image, please wait... 🖌️` });
 
   try {
     const { imageResult, enhancedPrompt } = await generateImageWithPrompt(prompt, message.author.id);
-    const imageUrl = imageResult.images[0].url; 
+    const imageUrl = imageResult.images[0].url;
     const modelUsed = imageResult.modelUsed;
     const isGuild = message.guild !== null;
-    const imageBuffer = await fetchImageAsBuffer(imageUrl);
-    const attachment = new AttachmentBuilder(imageBuffer, { name: 'generated-image.png' });
+    const imageExtension = path.extname(imageUrl) || '.png';
+    const attachment = new AttachmentBuilder(imageUrl, { name: `generated-image${imageExtension}` });
     const embed = new EmbedBuilder()
-      .setColor(0x505050)
+      .setColor(hexColour)
       .setAuthor({ name: `To ${message.author.displayName}`, iconURL: message.author.displayAvatarURL() })
-      .setDescription(`Here Is Your Generated Image\n**Original Prompt:**\n\`\`\`${prompt}\`\`\``)
-      .addFields(
-        { name: '**Generated by:**', value: `\`${message.author.displayName}\``, inline: true },
-        { name: '**Model Used:**', value: `\`${modelUsed}\``, inline: true },
-        { name: '**Promot Enhancer:**', value: `\`${enhancedPrompt !== 'Disabled' ? 'Enabled' : 'Disabled'}\``, inline: true }
-      )
-      .setImage('attachment://generated-image.png')
+      .setDescription(`Here Is Your Generated Image\n**Original Prompt:**\n\`\`\`${prompt.length > 3900 ? prompt.substring(0, 3900) + '...' : prompt}\`\`\``)
+      .addFields({ name: '**Generated by:**', value: `\`${message.author.displayName}\``, inline: true }, { name: '**Model Used:**', value: `\`${modelUsed}\``, inline: true }, { name: '**Prompt Enhancer:**', value: `\`${enhancedPrompt !== 'Disabled' ? 'Enabled' : 'Disabled'}\``, inline: true })
+      .setImage(`attachment://generated-image${imageExtension}`)
       .setTimestamp()
     if (enhancedPrompt !== 'Disabled') {
       let displayPrompt = enhancedPrompt;
@@ -909,27 +1087,50 @@ async function genimg(prompt, message) {
   } catch (error) {
     console.error(error);
     try {
-      const messageReference = await message.reply({ content: `Sorry, could not generate the image. Please try again later.` });
+      const embed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Error')
+        .setDescription(`Sorry, could not generate the image. Please try again later.\n> **Prompt:**\n\`\`\`\n${prompt.length > 3900 ? prompt.substring(0, 3900) + '...' : prompt}\n\`\`\``);
+      const messageReference = await message.reply({ embeds: [embed] });
       await addSettingsButton(messageReference);
       await generatingMsg.delete();
-    } catch(error) {}
+    } catch (error) {}
   }
 }
 
-async function genimgslash(prompt, model, interaction) {
-  const generatingMsg = await interaction.reply({ content: `Generating your image with ${model}, please wait... 🖌️` });
-  userPreferredImageModel[interaction.user.id] = model;
+async function genimgslash(prompt, modelInput, interaction) {
+  const userId = interaction.user.id;
+  const preferredModel = modelInput || userPreferredImageModel[userId] || defaultImgModel;
+
+  if (modelInput) {
+    userPreferredImageModel[userId] = modelInput;
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0x00FFFF)
+    .setTitle('Generating Image')
+    .setDescription(`Generating your image with \`${preferredModel}\`, please wait... 🖌️`);
+  await interaction.reply({ embeds: [embed], ephemeral: true });
 
   try {
     await generateAndSendImage(prompt, interaction);
-    await generatingMsg.delete();
   } catch (error) {
-    console.log(error);
-    try {
-      const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, the image could not be generated. Please try again later.` });
-      await addSettingsButton(messageReference);
-      await generatingMsg.delete();
-    } catch(error) {}
+    console.error(error);
+    await handleImageGenerationError(interaction, prompt);
+    return;
+  }
+}
+
+async function handleImageGenerationError(interaction, prompt) {
+  try {
+    const embed = new EmbedBuilder()
+      .setColor(0xFF0000)
+      .setTitle('Error')
+      .setDescription(`Sorry, the image could not be generated. Please try again later.\n> **Prompt:**\n\`\`\`\n${prompt.length > 3900 ? prompt.substring(0, 3900) + '...' : prompt}\n\`\`\``);
+    const errorMsg = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed] });
+    await addSettingsButton(errorMsg);
+  } catch (err) {
+    console.error("Error sending error message: ", err);
   }
 }
 
@@ -939,19 +1140,15 @@ async function generateAndSendImage(prompt, interaction) {
     const imageUrl = imageResult.images[0].url;
     const modelUsed = imageResult.modelUsed;
     const isGuild = interaction.guild !== null;
-    const imageBuffer = await fetchImageAsBuffer(imageUrl);
-    const attachment = new AttachmentBuilder(imageBuffer, { name: 'generated-image.png' });
-    
+    const imageExtension = path.extname(imageUrl) || '.png';
+    const attachment = new AttachmentBuilder(imageUrl, { name: `generated-image${imageExtension}` });
+
     const embed = new EmbedBuilder()
-      .setColor(0x505050)
+      .setColor(hexColour)
       .setAuthor({ name: `To ${interaction.user.displayName}`, iconURL: interaction.user.displayAvatarURL() })
-      .setDescription(`Here Is Your Generated Image\n**Original Prompt:**\n\`\`\`${prompt}\`\`\``)
-      .addFields(
-        { name: '**Generated by:**', value: `\`${interaction.user.displayName}\``, inline: true },
-        { name: '**Model Used:**', value: `\`${modelUsed}\``, inline: true },
-        { name: '**Promot Enhancer:**', value: `\`${enhancedPrompt !== 'Disabled' ? 'Enabled' : 'Disabled'}\``, inline: true }
-      )
-      .setImage('attachment://generated-image.png')
+      .setDescription(`Here Is Your Generated Image\n**Original Prompt:**\n\`\`\`${prompt.length > 3900 ? prompt.substring(0, 3900) + '...' : prompt}\`\`\``)
+      .addFields({ name: '**Generated by:**', value: `\`${interaction.user.displayName}\``, inline: true }, { name: '**Model Used:**', value: `\`${modelUsed}\``, inline: true }, { name: '**Prompt Enhancer:**', value: `\`${enhancedPrompt !== 'Disabled' ? 'Enabled' : 'Disabled'}\``, inline: true })
+      .setImage(`attachment://generated-image${imageExtension}`)
       .setTimestamp();
     if (enhancedPrompt !== 'Disabled') {
       let displayPrompt = enhancedPrompt;
@@ -977,7 +1174,11 @@ async function handleModalSubmit(interaction) {
       const customInstructionsInput = interaction.fields.getTextInputValue('custom-personality-input');
       customInstructions[interaction.user.id] = customInstructionsInput.trim();
 
-      await interaction.reply({ content: '> Custom Personality Instructions Saved!', ephemeral: true });
+      const embed = new EmbedBuilder()
+        .setColor(0x00FF00)
+        .setTitle('Success')
+        .setDescription('Custom Personality Instructions Saved!');
+      await interaction.reply({ embeds: [embed], ephemeral: true });
     } catch (error) {
       console.log(error.message);
     }
@@ -986,102 +1187,102 @@ async function handleModalSubmit(interaction) {
       const customInstructionsInput = interaction.fields.getTextInputValue('custom-server-personality-input');
       customInstructions[interaction.guild.id] = customInstructionsInput.trim();
 
-      await interaction.reply({ content: 'Custom Server Personality Instructions Saved!', ephemeral: true });
+      const embed = new EmbedBuilder()
+        .setColor(0x00FF00)
+        .setTitle('Success')
+        .setDescription('Custom Server Personality Instructions Saved!');
+      await interaction.reply({ embeds: [embed], ephemeral: true });
     } catch (error) {
       console.log(error.message);
     }
   } else if (interaction.customId === 'text-speech-modal') {
-    const generatingMsg = await interaction.reply({ content: `${interaction.user}, generating your speech, please wait... 💽` });
+    const embed = new EmbedBuilder()
+      .setColor(0x00FFFF)
+      .setTitle('Generating Speech')
+      .setDescription(`Generating your speech, please wait... 💽`);
+    await interaction.reply({ embeds: [embed], ephemeral: true });
     try {
       const userId = interaction.user.id;
       const text = interaction.fields.getTextInputValue('text-speech-input');
       const outputUrl = await generateSpeechWithPrompt(text, userId, 'en');
       if (outputUrl && outputUrl !== 'Output URL is not available.') {
         await handleSuccessfulSpeechGeneration(interaction, text, "English", outputUrl);
-        await generatingMsg.delete();
       } else {
-        const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
+        const embed = new EmbedBuilder()
+          .setColor(0xFF0000)
+          .setTitle('Error')
+          .setDescription(`Sorry, something went wrong or the output URL is not available.\n> **Text:**\n\`\`\`\n${text.length > 3900 ? text.substring(0, 3900) + '...' : text}\n\`\`\``);
+        const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed] });
         await addSettingsButton(messageReference);
-        await generatingMsg.delete();
       }
     } catch (error) {
       console.log(error);
       try {
-        const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
+        const embed = new EmbedBuilder()
+          .setColor(0xFF0000)
+          .setTitle('Error')
+          .setDescription(`Sorry, something went wrong or the output URL is not available.\n> **Text:**\n\`\`\`\n${text.length > 3900 ? text.substring(0, 3900) + '...' : text}\n\`\`\``);
+        const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed] });
         await addSettingsButton(messageReference);
-        await generatingMsg.delete();
-      } catch(error) {}
+      } catch (error) {}
     }
   } else if (interaction.customId === 'text-music-modal') {
-    const generatingMsg = await interaction.reply({ content: `${interaction.user}, generating your music, please wait... 🎧` });
+    const embed = new EmbedBuilder()
+      .setColor(0x00FFFF)
+      .setTitle('Generating Music')
+      .setDescription(`Generating your music, please wait... 🎧`);
+    await interaction.reply({ embeds: [embed], ephemeral: true });
     try {
       const userId = interaction.user.id;
       const text = interaction.fields.getTextInputValue('text-music-input');
       const outputUrl = await generateMusicWithPrompt(text, userId);
       if (outputUrl && outputUrl !== 'Output URL is not available.') {
         await handleSuccessfulMusicGeneration(interaction, text, outputUrl);
-        await generatingMsg.delete();
       } else {
-        const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
+        const embed = new EmbedBuilder()
+          .setColor(0xFF0000)
+          .setTitle('Error')
+          .setDescription(`Sorry, something went wrong or the output URL is not available.\n> **Text:**\n\`\`\`\n${text.length > 3900 ? text.substring(0, 3900) + '...' : text}\n\`\`\``);
+        const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed] });
         await addSettingsButton(messageReference);
-        await generatingMsg.delete();
       }
     } catch (error) {
       console.log(error);
       try {
-        const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
+        const embed = new EmbedBuilder()
+          .setColor(0xFF0000)
+          .setTitle('Error')
+          .setDescription(`Sorry, something went wrong or the output URL is not available.\n> **Text:**\n\`\`\`\n${text.length > 3900 ? text.substring(0, 3900) + '...' : text}\n\`\`\``);
+        const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed] });
         await addSettingsButton(messageReference);
-        await generatingMsg.delete();
-      } catch(error) {}
-    }
-  } else if (interaction.customId === 'text-video-modal') {
-    const generatingMsg = await interaction.reply({ content: `${interaction.user}, generating your video, please wait... 📽️` });
-    try {
-      const userId = interaction.user.id;
-      const text = interaction.fields.getTextInputValue('text-video-input');
-      const outputUrl = await generateVideoWithPrompt(text, userId);
-      if (outputUrl && outputUrl !== 'Output URL is not available.') {
-        await handleSuccessfulVideoGeneration(interaction, text, outputUrl);
-        await generatingMsg.delete();
-      } else {
-        const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
-        await addSettingsButton(messageReference);
-        await generatingMsg.delete();
-      }
-    } catch (error) {
-      console.log(error);
-      try {
-        const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, something went wrong or the output URL is not available.` });
-        await addSettingsButton(messageReference);
-        await generatingMsg.delete();
-      } catch(error) {}
+      } catch (error) {}
     }
   } else if (interaction.customId === 'generate-image-modal') {
     const prompt = interaction.fields.getTextInputValue('image-prompt-input');
-
-    const generatingMsg = await interaction.reply({ content: `${interaction.user}, generating your image, please wait... 🖌️` });
+    const embed = new EmbedBuilder()
+      .setColor(0x00FFFF)
+      .setTitle('Generating Image')
+      .setDescription(`Generating your image, please wait... 🖌️`);
+    await interaction.reply({ embeds: [embed], ephemeral: true });
 
     try {
       await generateAndSendImage(prompt, interaction);
-      await generatingMsg.delete();
     } catch (error) {
       console.log(error);
       try {
-        const messageReference = await interaction.channel.send({ content: `${interaction.user}, sorry, could not generate the image. Please try again later.` });
+        const embed = new EmbedBuilder()
+          .setColor(0xFF0000)
+          .setTitle('Error')
+          .setDescription(`Sorry, could not generate the image. Please try again later.\n> **Prompt:**\n\`\`\`\n${prompt.length > 3900 ? prompt.substring(0, 3900) + '...' : prompt}\n\`\`\``);
+        const messageReference = await interaction.channel.send({ content: `${interaction.user}`, embeds: [embed] });
         await addSettingsButton(messageReference);
-        await generatingMsg.delete();
-      } catch(error) {}
+      } catch (error) {}
     }
   }
 }
 
 async function changeImageModel(interaction) {
   try {
-    // Define model names in an array
-    const models = [
-      'SD-XL', 'Playground', 'Anime', 'Stable-Cascade', 'Redmond', 'DallE-XL', 'Juggernaut'/*, 'Dall-e-3'*/, 'SD-XL-Alt'
-      ];
-    
     const selectedModel = userPreferredImageModel[interaction.user.id] || defaultImgModel;
 
     // Create a select menu
@@ -1092,7 +1293,7 @@ async function changeImageModel(interaction) {
       .setMaxValues(1);
 
     // Add options to select menu
-    models.forEach((model) => {
+    imgModels.forEach((model) => {
       selectMenu.addOptions([
         {
           label: model,
@@ -1106,8 +1307,13 @@ async function changeImageModel(interaction) {
     // Create an action row and add the select menu to it
     const actionRow = new ActionRowBuilder().addComponents(selectMenu);
 
+    const embed = new EmbedBuilder()
+      .setColor(0xFFFFFF)
+      .setTitle('Select Image Generation Model')
+      .setDescription('Select the model you want to use for image generation.');
+
     await interaction.reply({
-      content: '> `Select Image Generation Model:`',
+      embeds: [embed],
       components: [actionRow],
       ephemeral: true
     });
@@ -1121,13 +1327,13 @@ async function changeImageResolution(interaction) {
     const userId = interaction.user.id;
     const selectedModel = userPreferredImageModel[userId];
     let supportedResolution;
-    const supportedModels = ['DallE-XL', 'Redmond', 'Anime', 'Stable-Cascade', 'Playground', 'Juggernaut', 'SD-XL-Alt'];
-    if (supportedModels.includes(selectedModel)) {
+    const unsupportedModels = [];
+    if (!unsupportedModels.includes(selectedModel)) {
       supportedResolution = ['Square', 'Portrait', 'Wide'];
     } else {
       supportedResolution = ['Square'];
     }
-    
+
     const selectedResolution = userPreferredImageResolution[userId] || 'Square';
 
     // Create a select menu
@@ -1150,8 +1356,13 @@ async function changeImageResolution(interaction) {
     // Create an action row and add the select menu to it
     const actionRow = new ActionRowBuilder().addComponents(selectMenu);
 
+    const embed = new EmbedBuilder()
+      .setColor(0xFFFFFF)
+      .setTitle('Select Image Generation Resolution')
+      .setDescription('Select the resolution you want to use for image generation.');
+
     await interaction.reply({
-      content: '> **Supported Models:** `Stable-Cascade`, `Redmond`, `SD-XL-Alt`, `Playground`, `Juggernaut`, `Anime`, and `DallE-XL`\n\n> `Select Image Generation Resolution:`',
+      embeds: [embed],
       components: [actionRow],
       ephemeral: true
     });
@@ -1178,36 +1389,33 @@ async function changeSpeechModel(interaction) {
     actionRows.push(actionRow);
   }
 
+  const embed = new EmbedBuilder()
+    .setColor(0xFFFFFF)
+    .setTitle('Select Speech Generation Model')
+    .setDescription('Choose the model you want to use for speech generation.');
+
   await interaction.reply({
-    content: '> `Select Speech Generation Model:`',
+    embeds: [embed],
     components: actionRows,
     ephemeral: true
   });
 }
 
-const speechMusicVideoModelFunctions = {
-  "1": speechGen,
-  "MusicGen": musicGen,
-  "VideoGen": videoGen
-};
-
-const imageModelFunctions = {
-  "SD-XL": generateWithSDXL,
-  "Playground": generateWithPlayground,
-  "Anime": generateWithAnime,
-  "Stable-Cascade": generateWithSC,
-  "Redmond": generateWithRedmond,
-  "DallE-XL": generateWithDallEXL,
-  "Juggernaut": generateWithJuggernaut,
-  "Dall-e-3": generateWithDalle3,
-  "SD-XL-Alt": generateWithSDXLAlt
+const speechMusicModelFunctions = {
+  '1': speechGen,
+  'MusicGen': musicGen
 };
 
 async function handleImageSelectModel(interaction, model) {
   try {
     const userId = interaction.user.id;
     userPreferredImageModel[userId] = model;
-    await interaction.reply({ content: `**Image Generation Model Selected**: ${model}`, ephemeral: true });
+    const embed = new EmbedBuilder()
+      .setColor(0x00FF00)
+      .setTitle('Model Selected')
+      .setDescription(`Image Generation Model Selected: \`${model}\``);
+
+    await interaction.reply({ embeds: [embed], ephemeral: true });
   } catch (error) {
     console.log(error.message);
   }
@@ -1217,7 +1425,12 @@ async function handleImageSelectResolution(interaction, resolution) {
   try {
     const userId = interaction.user.id;
     userPreferredImageResolution[userId] = resolution;
-    await interaction.reply({ content: `**Image Generation Resolution Selected**: ${resolution}`, ephemeral: true });
+    const embed = new EmbedBuilder()
+      .setColor(0x00FF00)
+      .setTitle('Resolution Selected')
+      .setDescription(`Image Generation Resolution Selected: \`${resolution}\``);
+
+    await interaction.reply({ embeds: [embed], ephemeral: true });
   } catch (error) {
     console.log(error.message);
   }
@@ -1227,8 +1440,13 @@ async function handleSpeechSelectModel(interaction, model) {
   try {
     const userId = interaction.user.id;
     userPreferredSpeechModel[userId] = model;
-    await interaction.reply({ content: `**Speech Generation Model Selected**: ${model}`, ephemeral: true });
-  } catch(error) {
+    const embed = new EmbedBuilder()
+      .setColor(0x00FF00)
+      .setTitle('Model Selected')
+      .setDescription(`Speech Generation Model Selected: \`${model}\``);
+
+    await interaction.reply({ embeds: [embed], ephemeral: true });
+  } catch (error) {
     console.log(error.message);
   }
 }
@@ -1241,111 +1459,14 @@ async function togglePromptEnhancer(interaction) {
     }
     userPreferredImagePromptEnhancement[userId] = !userPreferredImagePromptEnhancement[userId];
     const newState = userPreferredImagePromptEnhancement[userId] ? 'Enabled' : 'Disabled';
-    await interaction.reply({ content: `Prompt Enhancer is now ${newState}.`, ephemeral: true });
+    const embed = new EmbedBuilder()
+      .setColor(0x00FF00)
+      .setTitle('Prompt Enhancer Status')
+      .setDescription(`Prompt Enhancer is now \`${newState}\`.`);
+
+    await interaction.reply({ embeds: [embed], ephemeral: true });
   } catch (error) {
     console.error(`Error toggling Prompt Enhancer: ${error.message}`);
-  }
-}
-
-const diffusionMaster = `You are the Diffusion Master, an expert at crafting detailed prompts for the generative AI "Stable Diffusion." Your skill ensures top-tier image generation by meticulously planning out each step and sharing your approach. You keep your tone casual and always add necessary details to enrich prompts, considering each interaction as unique. Construct prompts exclusively in English, translate to English if needed. Your expertise enables users to create prompts that could lead to potentially award-winning images, focusing on details such as background, style, and additional artistic elements.\n\n## Basic information required for crafting a Stable Diffusion prompt:-\n\nPrompt Structure:\n\n- **For Photorealistic Images**: Use the format \`{Subject Description}, Type of Image, Art Styles, Art Inspirations, Camera Settings, Shot Type, and Render Related Information\`. It's crucial to detail the camera settings and model for achieving photorealism.\n\n- **For Artistic Images**: Adopt the format \`Type of Image, {Subject Description}, Art Styles, Art Inspirations, Angle, Perspective, Render Related Information\`. This structure is ideal for conveying artistic visions, emphasizing style, and perspective.\n\nEssential Guidelines:\n\n1. **Immediate Focus on Subjects and Actions**: Begin your description by clearly mentioning the main subjects and their actions. This ensures the initial focus is sharp and the narrative starts with clarity and purpose.\n\n2. **Art Style Selection Protocol**: If the art style is not specified by the user, automatically determine the most fitting style for the image. For subjects and scenes not inherently tied to a particular art style, default to photorealism. However, if the subject is closely associated with a specific genre (e.g., anime characters like those from Konohagakure in Naruto), adapt the corresponding art style (in this case, anime) unless instructed otherwise by the user.\n\n3. **Word Choice and Adjectives**: Use strategic placement of keywords and select vivid adjectives to significantly impact the visualization. These elements are crucial for painting a detailed picture for the AI.\n\n4. **Environment/Background Details**: Incorporate comprehensive descriptions of the surroundings to add context and depth to the main subject, enriching the overall scene being depicted.\n\n5. **Image Specification Clarity**: Clearly define the desired type of image to steer the AI towards creating a vision that aligns with your expectations.\n\n6. **Incorporating Art Styles and Inspirations**: Mention specific art styles or inspirations to guide the AI in emulating a particular aesthetic or technique that resonates with your vision.\n\n7. **Technical Detailing**: Elaborate on camera angles, lighting, and preferred render styles to either enhance the artistic flair or ensure the realism of the image lives up to the envisioned clarity.\n\n8. **Keyword Utilization and Importance Leveling**: Apply parentheses for emphasizing specific features (e.g., "(masterpiece:1.5)") and square brackets for blending characteristics (e.g., "{blue hair:white hair:0.3}"). This syntax assists in assigning the importance of various elements, helping balance the composition according to your preferences.\n\nIllustrated Examples:\n\n1. cinematic movie extreme close-up still of an epic scene of a [ETHNICITY] [OCCUPATION] in the [SEASON] at [DAYTIME], centered, looking into the camera, fog atmosphere, volumetrics, photorealistic, from a western movie, analog, very grainy, film still, kodak ektar, fujifilm fuji, kodak gold, cinestill 800t, kodak portra, photo taken by thomas hoepker\n\n2. fuji film candid portrait of [SUBJECT] wearing sunglasses rocking out on the streets of miami at night, 80s album cover, vaporwave, synthwave, retrowave, cinematic, intense, highly detailed, dark ambient, beautiful, dramatic lighting, hyperrealistic\n\n3. by (Boris Vallejo:0.85) and (pixar:0.75) cinematic film still of a detailed (happy:1.35) weirdpunk king driving a motorcycle, a detective solves crimes by rogue androids . shallow depth of field, vignette, highly detailed, bokeh, cinemascope, moody, epic, gorgeous, film grain, grainy\n\n4. *~cinematic~*~ #macro tilt shift photography . professional #disassembled 3d #fractal cube torus triangular pyramid model in space, connected with energy flows, #science fiction, intricate fire ice water light energy reflection, elegant, highly detailed, sharp focus . octane render, highly detailed, volumetric, dramatic lighting . natural light photo, Canon 85L f2.8, ISO320, 5000K colour balance\n\n5. an epic chibi comic book style portrait painting of a teddy bear ninja, character design by mark ryden and pixar and hayao miyazaki, unreal 5, daz, hyperrealistic, octane render, cosplay, rpg portrait, dynamic lighting, intricate detail, harvest fall vibrancy, cinematic\n\n6. art design by Masamune Shirow and Detroit Become Human of a beautiful sorceress walking through the forest by night surrounded by a blue aura bubble around her, you can see the stars in the sky, natural light photo, Canon 85L f2.8, ISO320, 5000K colour balance, directed by Wes Anderson and Arcane\n\n7. portrait of a battered defeated humanoid robot made out of silver metal standing on a hill overlooking the ruins of a destroyed urban city, from behind, golden hour, dystopian retro futuristic, natural light photo, Canon 85L f4.8, ISO320, 5000K colour balance, (pulp art by Robert Mcginnis:0.9) and (pixar:0.7)\n\n8. photo of a battle cyborg fighting a dark hr giger battle druid with chrome skin, on a space station, explosions and smoke in the background, photorealistic, narrow corridor lights, from the movie "chappie", analog, very grainy, film still, kodak ektar, fujifilm fuji, kodak gold, cinestill 800t, kodak portra, photo taken by thomas hoepker\n\nThese guidelines and examples serve as a comprehensive blueprint for translating imaginative concepts into precise prompts, facilitating the generation of stunning AI-powered images that adhere closely to the user's vision.\nFollowing the example, write a prompt that describes the specified content. Start directly with the prompt, providing only the prompt itself, without using any kind of natural language other than the prompt itself. Ensure the prompt is enclosed within a code block:`
-
-async function enhancePrompt1(prompt) {
-  const retryLimit = 3;
-  let currentAttempt = 0;
-  let error;
-
-  while (currentAttempt < retryLimit) {
-    try {
-      currentAttempt += 1;
-      console.log(`Attempt ${currentAttempt}`);
-
-      let response = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('Request timed out'));
-        }, 15000);
-
-        const payload = {
-          model: "llama3-70b-8192",
-          stream: false,
-          messages: [
-            {
-              role: "user",
-              content: `${diffusionMaster}\n${prompt}`
-            }
-          ]
-        };
-
-        const headers = {
-          "Content-Type": "application/json"
-        };
-        if (process.env.OPENAI_API_KEY) {
-          headers['Authorization'] = `Bearer ${process.env.OPENAI_API_KEY}`;
-        }
-
-
-        const baseURL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-        axios.post(`${baseURL}/chat/completions`, payload, { headers: headers })
-          .then(response => {
-            clearTimeout(timeout);
-            resolve(response);
-          })
-          .catch(err => {
-            clearTimeout(timeout);
-            reject(err);
-          });
-      });
-
-      if (response.data && response.data.choices && response.data.choices.length > 0) {
-        let content = response.data.choices[0].message.content;
-        const pattern1 = /^(```|`|"|')|(```|`|"|')$/g;
-        content = content.replace(pattern1, '').trim();
-        const pattern2 = content.match(/```(.*?)```/s);
-        content = pattern2 && pattern2[1] ? pattern2[1].trim() : content;
-        console.log(content);
-        return content;
-      } else {
-        console.log('Error processing response data');
-        error = new Error('Error processing response data');
-      }
-    } catch (err) {
-      console.error(err.message);
-      error = err;
-    }
-  }
-  if (error) {
-    console.error('Retries exhausted or an error occurred:', error.message);
-  }
-  return prompt;
-}
-
-async function enhancePrompt(prompt, attempts = 3) {
-  const generate = async () => {
-    const model = genAI.getGenerativeModel({ model: "gemini-pro", safetySettings });
-    const result = await model.generateContent(`${diffusionMaster}\n${prompt}`);
-    return result.response.text();
-  };
-
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      const textResponse = await Promise.race([
-                generate(),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 10000))
-            ]);
-
-      let cleansedOutput = textResponse;
-      const pattern1 = /^(```|`|"|')|(```|`|"|')$/g;
-      cleansedOutput = cleansedOutput.replace(pattern1, '').trim();
-      const pattern2 = cleansedOutput.match(/```(.*?)```/s);
-      cleansedOutput = pattern2 && pattern2[1] ? pattern2[1].trim() : cleansedOutput;
-      console.log(cleansedOutput);
-      return cleansedOutput;
-    } catch (error) {
-      console.error(`Attempt ${attempt} failed:`, error);
-      if (attempt === attempts) {
-        console.log('All attempts failed, returning the original prompt.');
-        return prompt;
-      }
-    }
   }
 }
 
@@ -1370,7 +1491,13 @@ async function generateImageWithPrompt(prompt, userId) {
     } else {
       enhancedPromptStatus = 'Disabled';
     }
-    const imageResult = await retryOperation(() => generateFunction(finalPrompt, resolution), 3);
+
+    const generate = generateFunction === generateImage ?
+      () => generateImage(finalPrompt, resolution, selectedModel) :
+      () => generateFunction(finalPrompt, resolution);
+
+    const imageResult = await retryOperation(generate, 3);
+
     return {
       imageResult,
       enhancedPrompt: enhancedPromptStatus
@@ -1384,7 +1511,7 @@ async function generateImageWithPrompt(prompt, userId) {
 async function generateSpeechWithPrompt(prompt, userId, language) {
   try {
     const selectedModel = userPreferredSpeechModel[userId] || "1";
-    const generateFunction = speechMusicVideoModelFunctions[selectedModel];
+    const generateFunction = speechMusicModelFunctions[selectedModel];
 
     if (!generateFunction) {
       throw new Error(`Unsupported speech model: ${selectedModel}`);
@@ -1399,33 +1526,12 @@ async function generateSpeechWithPrompt(prompt, userId, language) {
 async function generateMusicWithPrompt(prompt, userId) {
   try {
     const selectedModel = "MusicGen";
-    const generateFunction = speechMusicVideoModelFunctions[selectedModel];
+    const generateFunction = speechMusicModelFunctions[selectedModel];
 
     if (!generateFunction) {
       throw new Error(`Unsupported music model: ${selectedModel}`);
     }
     return await retryOperation(() => generateFunction(prompt), 3);
-  } catch (error) {
-    console.error('Error generating music:', error.message);
-    throw new Error('Could not generate msuic after retries');
-  }
-}
-
-async function generateVideoWithPrompt(prompt, userId) {
-  try {
-    const selectedModel = "VideoGen";
-    const generateFunction = speechMusicVideoModelFunctions[selectedModel];
-    if (userPreferredImagePromptEnhancement[userId] === undefined) {
-      userPreferredImagePromptEnhancement[userId] = true;
-    }
-    if (!generateFunction) {
-      throw new Error(`Unsupported music model: ${selectedModel}`);
-    }
-    let finalPrompt = filterPrompt(prompt);
-    if (userPreferredImagePromptEnhancement[userId]) {
-      finalPrompt = await enhancePrompt(finalPrompt);
-    }
-    return await retryOperation(() => generateFunction(finalPrompt), 3);
   } catch (error) {
     console.error('Error generating music:', error.message);
     throw new Error('Could not generate msuic after retries');
@@ -1440,8 +1546,12 @@ async function generateVideoWithPrompt(prompt, userId) {
 
 async function clearChatHistory(interaction) {
   try {
-    chatHistories[interaction.user.id] = [];
-    await interaction.reply({ content: '> `Chat history cleared!`', ephemeral: true });
+    chatHistories[interaction.user.id] = {};
+    const embed = new EmbedBuilder()
+      .setColor(0x00FF00)
+      .setTitle('Chat History Cleared')
+      .setDescription('Chat history cleared!');
+    await interaction.reply({ embeds: [embed], ephemeral: true });
   } catch (error) {
     console.log(error.message);
   }
@@ -1453,7 +1563,11 @@ async function alwaysRespond(interaction) {
     const channelId = interaction.channelId;
 
     if (interaction.channel.type === ChannelType.DM) {
-      await interaction.reply({ content: '> `This feature is disabled in DMs.`', ephemeral: true });
+      const dmDisabledEmbed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Feature Disabled in DMs')
+        .setDescription('This feature is disabled in direct messages.');
+      await interaction.reply({ embeds: [dmDisabledEmbed], ephemeral: true });
       return;
     }
 
@@ -1463,10 +1577,8 @@ async function alwaysRespond(interaction) {
 
     if (activeUsersInChannels[channelId][userId]) {
       delete activeUsersInChannels[channelId][userId];
-      await interaction.reply({ content: '> Bot response to your messages is turned `OFF`.', ephemeral: true });
     } else {
       activeUsersInChannels[channelId][userId] = true;
-      await interaction.reply({ content: '> Bot response to your messages is turned `ON`.', ephemeral: true });
     }
   } catch (error) {
     console.log(error.message);
@@ -1476,23 +1588,149 @@ async function alwaysRespond(interaction) {
 async function handleRespondToAllCommand(interaction) {
   try {
     if (interaction.channel.type === ChannelType.DM) {
-      return interaction.reply({ content: 'This command cannot be used in DMs.', ephemeral: true });
+      const dmEmbed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Command Not Available')
+        .setDescription('This command cannot be used in DMs.');
+      return interaction.reply({ embeds: [dmEmbed], ephemeral: true });
     }
 
     if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-      return interaction.reply({ content: 'You need to be an admin to use this command.', ephemeral: true });
+      const adminEmbed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Admin Required')
+        .setDescription('You need to be an admin to use this command.');
+      return interaction.reply({ embeds: [adminEmbed], ephemeral: true });
     }
 
     const channelId = interaction.channelId;
     if (alwaysRespondChannels[channelId]) {
       delete alwaysRespondChannels[channelId];
-      await interaction.reply({ content: '> **The bot will now stop** responding to all messages in this channel.', ephemeral: false });
+      const stopRespondEmbed = new EmbedBuilder()
+        .setColor(0xFFA500)
+        .setTitle('Bot Response Disabled')
+        .setDescription('The bot will now stop responding to all messages in this channel.');
+      await interaction.reply({ embeds: [stopRespondEmbed], ephemeral: false });
     } else {
       alwaysRespondChannels[channelId] = true;
-      await interaction.reply({ content: '> **The bot will now respond** to all messages in this channel.', ephemeral: false });
+      const startRespondEmbed = new EmbedBuilder()
+        .setColor(0x00FF00)
+        .setTitle('Bot Response Enabled')
+        .setDescription('The bot will now respond to all messages in this channel.');
+      await interaction.reply({ embeds: [startRespondEmbed], ephemeral: false });
     }
   } catch (error) {
     console.log(error.message);
+  }
+}
+
+async function toggleChannelChatHistory(interaction) {
+  try {
+    if (interaction.channel.type === ChannelType.DM) {
+      const dmEmbed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Command Not Available')
+        .setDescription('This command cannot be used in DMs.');
+      return interaction.reply({ embeds: [dmEmbed], ephemeral: true });
+    }
+
+    if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+      const adminEmbed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Admin Required')
+        .setDescription('You need to be an admin to use this command.');
+      return interaction.reply({ embeds: [adminEmbed], ephemeral: true });
+    }
+
+    const channelId = interaction.channelId;
+    const enabled = interaction.options.getBoolean('enabled');
+    const instructions = interaction.options.getString('instructions') || defaultPersonality;
+
+    if (enabled) {
+      channelWideChatHistory[channelId] = true;
+      customInstructions[channelId] = instructions;
+
+      const enabledEmbed = new EmbedBuilder()
+        .setColor(0x00FF00)
+        .setTitle('Channel History Enabled')
+        .setDescription(`Channel-wide chat history has been enabled.`);
+      await interaction.reply({ embeds: [enabledEmbed], ephemeral: false });
+    } else {
+      delete channelWideChatHistory[channelId];
+      delete customInstructions[channelId];
+      delete chatHistories[channelId];
+
+      const disabledEmbed = new EmbedBuilder()
+        .setColor(0xFFA500)
+        .setTitle('Channel History Disabled')
+        .setDescription('Channel-wide chat history has been disabled.');
+      await interaction.reply({ embeds: [disabledEmbed], ephemeral: false });
+    }
+  } catch (error) {
+    console.error('Error in toggleChannelChatHistory:', error);
+  }
+}
+
+async function handleStatusCommand(interaction) {
+  try {
+    const initialEmbed = new EmbedBuilder()
+      .setColor(0x0099FF)
+      .setTitle('System Information')
+      .setDescription('Fetching system information...')
+      .setTimestamp();
+
+    const message = await interaction.reply({ embeds: [initialEmbed], fetchReply: true });
+    await addSettingsButton(message);
+
+    const updateMessage = async () => {
+      try {
+        const [{ totalMemMb, usedMemMb, freeMemMb, freeMemPercentage }, cpuPercentage] = await Promise.all([
+          mem.info(),
+          cpu.usage()
+        ]);
+
+        const now = new Date();
+        const nextReset = new Date();
+        nextReset.setHours(0, 0, 0, 0);
+        if (nextReset <= now) {
+          nextReset.setDate(now.getDate() + 1);
+        }
+        const timeLeftMillis = nextReset - now;
+        const hours = Math.floor(timeLeftMillis / 3600000);
+        const minutes = Math.floor((timeLeftMillis % 3600000) / 60000);
+        const seconds = Math.floor((timeLeftMillis % 60000) / 1000);
+        const timeLeft = `${hours}h ${minutes}m ${seconds}s`;
+
+        const embed = new EmbedBuilder()
+          .setColor(hexColour)
+          .setTitle('System Information')
+          .addFields({ name: 'Memory (RAM)', value: `Total Memory: \`${totalMemMb}\` MB\nUsed Memory: \`${usedMemMb}\` MB\nFree Memory: \`${freeMemMb}\` MB\nPercentage Of Free Memory: \`${freeMemPercentage}\`%`, inline: true }, { name: 'CPU', value: `Percentage of CPU Usage: \`${cpuPercentage}\`%`, inline: true }, { name: 'Time Until Next Reset', value: timeLeft, inline: true })
+          .setTimestamp();
+
+        await message.edit({ embeds: [embed] });
+      } catch (error) {
+        console.error('Error updating message:', error);
+        clearInterval(interval);
+      }
+    };
+
+    await updateMessage();
+
+    const interval = setInterval(async () => {
+      try {
+        await updateMessage();
+      } catch (error) {
+        clearInterval(interval);
+        console.error('Stopping updates due to error:', error);
+      }
+    }, 2000);
+
+    setTimeout(() => {
+      clearInterval(interval);
+    }, 30000);
+
+  } catch (error) {
+    console.error('Error in handleStatusCommand function:', error);
   }
 }
 
@@ -1502,37 +1740,51 @@ function initializeBlacklistForGuild(guildId) {
       blacklistedUsers[guildId] = [];
     }
     if (!serverSettings[guildId]) {
-      serverSettings[guildId] = {
-        serverChatHistory: false,
-        settingsSaveButton: true,
-        customServerPersonality: false,
-        serverResponsePreference:false,
-        responseStyle: "embedded"
-      };
+      serverSettings[guildId] = defaultServerSettings;
     }
-  } catch(error) {}
+  } catch (error) {}
 }
 
 async function handleBlacklistCommand(interaction) {
   try {
     if (interaction.channel.type === ChannelType.DM) {
-      return interaction.reply({ content: 'This command cannot be used in DMs.', ephemeral: true });
+      const dmEmbed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Command Not Available')
+        .setDescription('This command cannot be used in DMs.');
+      return interaction.reply({ embeds: [dmEmbed], ephemeral: true });
     }
 
     if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-      return interaction.reply({ content: 'You need to be an admin to use this command.', ephemeral: true });
+      const adminEmbed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Admin Required')
+        .setDescription('You need to be an admin to use this command.');
+      return interaction.reply({ embeds: [adminEmbed], ephemeral: true });
     }
+
     const userId = interaction.options.getUser('user').id;
 
-    // Add the user to the blacklist if not already present
-    initializeBlacklistForGuild(interaction.guild.id);
+    // Initialize blacklist for the guild if it doesn't exist
+    if (!blacklistedUsers[interaction.guild.id]) {
+      blacklistedUsers[interaction.guild.id] = [];
+    }
+
     if (!blacklistedUsers[interaction.guild.id].includes(userId)) {
       blacklistedUsers[interaction.guild.id].push(userId);
-      await interaction.reply(`<@${userId}> has been blacklisted.`);
+      const blacklistedEmbed = new EmbedBuilder()
+        .setColor(0x00FF00)
+        .setTitle('User Blacklisted')
+        .setDescription(`<@${userId}> has been blacklisted.`);
+      await interaction.reply({ embeds: [blacklistedEmbed] });
     } else {
-      await interaction.reply(`<@${userId}> is already blacklisted.`);
+      const alreadyBlacklistedEmbed = new EmbedBuilder()
+        .setColor(0xFFA500)
+        .setTitle('User Already Blacklisted')
+        .setDescription(`<@${userId}> is already blacklisted.`);
+      await interaction.reply({ embeds: [alreadyBlacklistedEmbed] });
     }
-  } catch(error) {
+  } catch (error) {
     console.log(error.message);
   }
 }
@@ -1540,24 +1792,44 @@ async function handleBlacklistCommand(interaction) {
 async function handleWhitelistCommand(interaction) {
   try {
     if (interaction.channel.type === ChannelType.DM) {
-      return interaction.reply({ content: 'This command cannot be used in DMs.', ephemeral: true });
+      const dmEmbed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Command Not Available')
+        .setDescription('This command cannot be used in DMs.');
+      return interaction.reply({ embeds: [dmEmbed], ephemeral: true });
     }
 
     if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-      return interaction.reply({ content: 'You need to be an admin to use this command.', ephemeral: true });
+      const adminEmbed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Admin Required')
+        .setDescription('You need to be an admin to use this command.');
+      return interaction.reply({ embeds: [adminEmbed], ephemeral: true });
     }
+
     const userId = interaction.options.getUser('user').id;
 
-    // Remove the user from the blacklist if present
-    initializeBlacklistForGuild(interaction.guild.id);
+    // Ensure the guild's blacklist is initialized
+    if (!blacklistedUsers[interaction.guild.id]) {
+      blacklistedUsers[interaction.guild.id] = [];
+    }
+
     const index = blacklistedUsers[interaction.guild.id].indexOf(userId);
     if (index > -1) {
       blacklistedUsers[interaction.guild.id].splice(index, 1);
-      await interaction.reply(`<@${userId}> has been removed from the blacklist.`);
+      const removedEmbed = new EmbedBuilder()
+        .setColor(0x00FF00)
+        .setTitle('User Whitelisted')
+        .setDescription(`<@${userId}> has been removed from the blacklist.`);
+      await interaction.reply({ embeds: [removedEmbed] });
     } else {
-      await interaction.reply(`<@${userId}> is not in the blacklist.`);
+      const notFoundEmbed = new EmbedBuilder()
+        .setColor(0xFFA500)
+        .setTitle('User Not Found')
+        .setDescription(`<@${userId}> is not in the blacklist.`);
+      await interaction.reply({ embeds: [notFoundEmbed] });
     }
-  } catch(error) {
+  } catch (error) {
     console.log(error.message);
   }
 }
@@ -1593,7 +1865,11 @@ async function downloadMessage(interaction) {
     }
 
     if (!textContent) {
-      await interaction.reply({ content: '> `The message is empty..?`', ephemeral: true });
+      const emptyEmbed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Empty Message')
+        .setDescription('The message is empty..?');
+      await interaction.reply({ embeds: [emptyEmbed], ephemeral: true });
       return;
     }
 
@@ -1602,38 +1878,84 @@ async function downloadMessage(interaction) {
 
     const attachment = new AttachmentBuilder(filePath, { name: 'message_content.txt' });
 
+    const initialEmbed = new EmbedBuilder()
+      .setColor(0xFFFFFF)
+      .setTitle('Message Content Downloaded')
+      .setDescription(`Here is the content of the message.`);
+
+    let response;
     if (interaction.channel.type === ChannelType.DM) {
-      await interaction.reply({ content: '> `Here is the content of the message:`', files: [attachment] });
+      response = await interaction.reply({ embeds: [initialEmbed], files: [attachment], fetchReply: true });
     } else {
       try {
-        await interaction.user.send({ content: '> `Here is the content of the message:`', files: [attachment] });
-        await interaction.reply({ content: '> `The message content has been sent to your DMs.`', ephemeral: true });
+        response = await interaction.user.send({ embeds: [initialEmbed], files: [attachment] });
+        const dmSentEmbed = new EmbedBuilder()
+          .setColor(0x00FF00)
+          .setTitle('Content Sent')
+          .setDescription('The message content has been sent to your DMs.');
+        await interaction.reply({ embeds: [dmSentEmbed], ephemeral: true });
       } catch (error) {
         console.error(`Failed to send DM: ${error}`);
-        await interaction.reply({ content: '> `Here is the content of the message:`', files: [attachment], ephemeral: true });
+        const failDMEmbed = new EmbedBuilder()
+          .setColor(0xFF0000)
+          .setTitle('Delivery Failed')
+          .setDescription('Failed to send the content to your DMs.');
+        response = await interaction.reply({ embeds: [failDMEmbed], files: [attachment], ephemeral: true, fetchReply: true });
       }
     }
 
     fs.unlinkSync(filePath);
+
+    const msgUrl = await uploadText(textContent);
+    const updatedEmbed = EmbedBuilder.from(response.embeds[0])
+      .setDescription(`Here is the content of the message.\n${msgUrl}`);
+
+    if (interaction.channel.type === ChannelType.DM) {
+      await interaction.editReply({ embeds: [updatedEmbed] });
+    } else {
+      await response.edit({ embeds: [updatedEmbed] });
+    }
+
   } catch (error) {
-    console.log(error.message);
+    console.log('Failed to process download: ', error);
   }
 }
+
+const uploadText = async (text) => {
+  const siteUrl = 'http://bin.shortbin.eu:8080';
+  try {
+    const response = await axios.post(`${siteUrl}/documents`, text, {
+      headers: { 'Content-Type': 'text/plain' },
+      timeout: 3000
+    });
+
+    const key = response.data.key;
+    return `\nURL: ${siteUrl}/${key}`;
+  } catch (error) {
+    console.log(error);
+    return '\nURL Error :(';
+  }
+};
 
 async function downloadConversation(interaction) {
   try {
     const userId = interaction.user.id;
-    const conversationHistory = chatHistories[userId];
+    const conversationHistory = getHistory(userId);
 
     if (!conversationHistory || conversationHistory.length === 0) {
-      await interaction.reply({ content: '> `No conversation history found.`', ephemeral: true });
+      const noHistoryEmbed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('No History Found')
+        .setDescription('No conversation history found.');
+      await interaction.reply({ embeds: [noHistoryEmbed], ephemeral: true });
       return;
     }
 
     let conversationText = '';
     for (let i = 0; i < conversationHistory.length; i++) {
-      const speaker = i % 2 === 0 ? '[User]' : '[Model]';
-      conversationText += `${speaker}:\n${conversationHistory[i]}\n\n`;
+      const role = conversationHistory[i].role === 'user' ? '[User]' : '[Model]';
+      const content = conversationHistory[i].parts.map(c => c.text).join('\n');
+      conversationText += `${role}:\n${content}\n\n`;
     }
 
     const tempFileName = path.join(__dirname, `${userId}_conversation.txt`);
@@ -1642,52 +1964,57 @@ async function downloadConversation(interaction) {
     const file = new AttachmentBuilder(tempFileName, { name: 'conversation_history.txt' });
 
     if (interaction.channel.type === ChannelType.DM) {
-      await interaction.reply({ content: '> `Here\'s your conversation history:`', files: [file] });
+      const historyContentEmbed = new EmbedBuilder()
+        .setColor(0xFFFFFF)
+        .setTitle('Conversation History')
+        .setDescription("Here's your conversation history:");
+      await interaction.reply({ embeds: [historyContentEmbed], files: [file] });
     } else {
       try {
-        await interaction.user.send({ content: '> `Here\'s your conversation history:`', files: [file] });
-        await interaction.reply({ content: '> `Your conversation history has been sent to your DMs.`', ephemeral: true });
+        await interaction.user.send({ content: "> `Here's your conversation history:`", files: [file] });
+        const dmSentEmbed = new EmbedBuilder()
+          .setColor(0x00FF00)
+          .setTitle('History Sent')
+          .setDescription('Your conversation history has been sent to your DMs.');
+        await interaction.reply({ embeds: [dmSentEmbed], ephemeral: true });
       } catch (error) {
         console.error(`Failed to send DM: ${error}`);
-        await interaction.reply({ content: '> `Here\'s your conversation history:`', files: [file], ephemeral: true });
+        const failDMEmbed = new EmbedBuilder()
+          .setColor(0xFF0000)
+          .setTitle('Delivery Failed')
+          .setDescription('Failed to send the conversation history to your DMs.');
+        await interaction.reply({ embeds: [failDMEmbed], files: [file], ephemeral: true });
       }
     }
 
+    // Clean up the temp file after sending.
     fs.unlinkSync(tempFileName);
   } catch (error) {
-    console.log(error.message);
+    console.log(`Failed to download conversation: ${error.message}`);
   }
 }
 
 async function removeCustomPersonality(interaction) {
   try {
     delete customInstructions[interaction.user.id];
-    await interaction.reply({ content: "> `Custom personality instructions removed!`", ephemeral: true });
-  } catch (error) {
-    console.log(error.message);
-  }
-}
+    const embed = new EmbedBuilder()
+      .setColor(0x00FF00)
+      .setTitle('Removed')
+      .setDescription('Custom personality instructions removed!');
 
-async function toggleUrlUserPreference(interaction) {
-  try {
-    const userId = interaction.user.id;
-    const currentPreference = getUrlUserPreference(userId);
-    userPreferredUrlHandle[userId] = currentPreference === 'OFF' ? 'ON' : 'OFF';
-    const updatedPreference = getUrlUserPreference(userId);
-    await interaction.reply({ content: `> **URL handling has been switched from \`${currentPreference}\` to \`${updatedPreference}\`.**`, ephemeral: true });
+    await interaction.reply({ embeds: [embed], ephemeral: true });
   } catch (error) {
     console.log(error.message);
   }
 }
 
 // Function to toggle user preference
-async function toggleUserPreference(interaction) {
+async function toggleUserResponsePreference(interaction) {
   try {
     const userId = interaction.user.id;
-    const currentPreference = getUserPreference(userId);
+    const currentPreference = getUserResponsePreference(userId);
     userResponsePreference[userId] = currentPreference === 'normal' ? 'embedded' : 'normal';
-    const updatedPreference = getUserPreference(userId);
-    await interaction.reply({ content: `> **Your responses has been switched from \`${currentPreference}\` to \`${updatedPreference}\`.**`, ephemeral: true });
+    await handleSubButtonInteraction(interaction, true);
   } catch (error) {
     console.log(error.message);
   }
@@ -1696,60 +2023,121 @@ async function toggleUserPreference(interaction) {
 async function toggleServerWideChatHistory(interaction) {
   try {
     if (!interaction.guild) {
-      await interaction.reply("This command can only be used in a server.");
+      const embed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Server Command Only')
+        .setDescription('This command can only be used in a server.');
+      await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    const serverId = interaction.guild.id;
-    serverSettings[serverId].serverChatHistory = !serverSettings[serverId].serverChatHistory;
-    await interaction.reply({content: `Server-wide Chat History Is Now \`${serverSettings[serverId].serverChatHistory}\`` , ephemeral: true});
 
+    const serverId = interaction.guild.id;
+    initializeBlacklistForGuild(serverId);
+
+    // Toggle the server-wide chat history setting
+    serverSettings[serverId].serverChatHistory = !serverSettings[serverId].serverChatHistory;
+    const statusMessage = `Server-wide Chat History is now \`${serverSettings[serverId].serverChatHistory ? "enabled" : "disabled"}\``;
+
+    let warningMessage = "";
+    if (serverSettings[serverId].serverChatHistory && !serverSettings[serverId].customServerPersonality) {
+      warningMessage = "\n\n⚠️ **Warning:** Enabling server-side chat history without enhancing server-wide personality management is not recommended. The bot may get confused between its personalities and conversations with different users.";
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(serverSettings[serverId].serverChatHistory ? 0x00FF00 : 0xFF0000)
+      .setTitle('Chat History Toggled')
+      .setDescription(statusMessage + warningMessage);
+
+    await interaction.reply({ embeds: [embed], ephemeral: true });
   } catch (error) {
-    console.log(error.message);
+    console.log('Error toggling server-wide chat history:', error.message);
   }
 }
 
 async function toggleServerPersonality(interaction) {
   try {
     if (!interaction.guild) {
-      await interaction.reply("This command can only be used in a server.");
+      const embed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Server Command Only')
+        .setDescription('This command can only be used in a server.');
+      await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    const serverId = interaction.guild.id;
-    serverSettings[serverId].customServerPersonality = !serverSettings[serverId].customServerPersonality;
-    await interaction.reply({content: `Server-wide Personality Is Now \`${serverSettings[serverId].customServerPersonality}\`` , ephemeral: true});
 
+    const serverId = interaction.guild.id;
+    initializeBlacklistForGuild(serverId);
+
+    // Toggle the server-wide personality setting
+    serverSettings[serverId].customServerPersonality = !serverSettings[serverId].customServerPersonality;
+    const statusMessage = `Server-wide Personality is now \`${serverSettings[serverId].customServerPersonality ? "enabled" : "disabled"}\``;
+
+    const embed = new EmbedBuilder()
+      .setColor(serverSettings[serverId].customServerPersonality ? 0x00FF00 : 0xFF0000)
+      .setTitle('Server Personality Toggled')
+      .setDescription(statusMessage);
+
+    await interaction.reply({ embeds: [embed], ephemeral: true });
   } catch (error) {
-    console.log(error.message);
+    console.log('Error toggling server-wide personality:', error.message);
   }
 }
 
 async function toggleServerResponsePreference(interaction) {
   try {
     if (!interaction.guild) {
-      await interaction.reply("This command can only be used in a server.");
+      const embed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Server Command Only')
+        .setDescription('This command can only be used in a server.');
+      await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    const serverId = interaction.guild.id;
-    serverSettings[serverId].serverResponsePreference = !serverSettings[serverId].serverResponsePreference;
-    await interaction.reply({content: `Server-wide Response Following Is Now \`${serverSettings[serverId].serverResponsePreference}\`` , ephemeral: true});
 
+    const serverId = interaction.guild.id;
+    initializeBlacklistForGuild(serverId);
+
+    // Toggle the server-wide response preference
+    serverSettings[serverId].serverResponsePreference = !serverSettings[serverId].serverResponsePreference;
+    const statusMessage = `Server-wide Response Following is now \`${serverSettings[serverId].serverResponsePreference ? "enabled" : "disabled"}\``;
+
+    const embed = new EmbedBuilder()
+      .setColor(serverSettings[serverId].serverResponsePreference ? 0x00FF00 : 0xFF0000)
+      .setTitle('Server Response Preference Toggled')
+      .setDescription(statusMessage);
+
+    await interaction.reply({ embeds: [embed], ephemeral: true });
   } catch (error) {
-    console.log(error.message);
+    console.log('Error toggling server-wide response preference:', error.message);
   }
 }
 
 async function toggleSettingSaveButton(interaction) {
   try {
     if (!interaction.guild) {
-      await interaction.reply("This command can only be used in a server.");
+      const embed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Server Command Only')
+        .setDescription('This command can only be used in a server.');
+      await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    const serverId = interaction.guild.id;
-    serverSettings[serverId].settingsSaveButton = !serverSettings[serverId].settingsSaveButton;
-    await interaction.reply({content: `Server-wide "Settings And Save Button" Is Now \`${serverSettings[serverId].settingsSaveButton}\`` , ephemeral: true});
 
+    const serverId = interaction.guild.id;
+    initializeBlacklistForGuild(serverId);
+
+    // Toggle the server-wide settings save button option
+    serverSettings[serverId].settingsSaveButton = !serverSettings[serverId].settingsSaveButton;
+    const statusMessage = `Server-wide "Settings and Save Button" is now \`${serverSettings[serverId].settingsSaveButton ? "enabled" : "disabled"}\``;
+
+    const embed = new EmbedBuilder()
+      .setColor(serverSettings[serverId].settingsSaveButton ? 0x00FF00 : 0xFF0000)
+      .setTitle('Settings Save Button Toggled')
+      .setDescription(statusMessage);
+
+    await interaction.reply({ embeds: [embed], ephemeral: true });
   } catch (error) {
-    console.log(error.message);
+    console.log('Error toggling server-wide settings save button:', error.message);
   }
 }
 
@@ -1777,56 +2165,91 @@ async function serverPersonality(interaction) {
 async function clearServerChatHistory(interaction) {
   try {
     if (!interaction.guild) {
-      await interaction.reply("This command can only be used in a server.");
+      const embed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('Server Command Only')
+        .setDescription('This command can only be used in a server.');
+      await interaction.reply({ embeds: [embed], ephemeral: true });
       return;
     }
-    if (serverSettings[interaction.guild.id].serverChatHistory) {
-      chatHistories[interaction.guild.id] = [];
-      await interaction.reply({ content: 'Server-Wide Chat History Cleared!', ephemeral: true });
+
+    const serverId = interaction.guild.id;
+    initializeBlacklistForGuild(serverId);
+
+    if (serverSettings[serverId].serverChatHistory) {
+      // Clear the server-wide chat history if it's enabled
+      chatHistories[serverId] = {};
+      const clearedEmbed = new EmbedBuilder()
+        .setColor(0x00FF00)
+        .setTitle('Chat History Cleared')
+        .setDescription('Server-wide chat history cleared!');
+      await interaction.reply({ embeds: [clearedEmbed], ephemeral: true });
     } else {
-      await interaction.reply({ content: 'Server-Wide Chat History Is Disabled For This Server.', ephemeral: true });
+      // If chat history is disabled, inform the user
+      const disabledEmbed = new EmbedBuilder()
+        .setColor(0xFFA500)
+        .setTitle('Feature Disabled')
+        .setDescription('Server-wide chat history is disabled for this server.');
+      await interaction.reply({ embeds: [disabledEmbed], ephemeral: true });
     }
   } catch (error) {
-    console.log(error.message);
+    console.log('Failed to clear server-wide chat history:', error.message);
   }
 }
 
 async function downloadServerConversation(interaction) {
   try {
-    const guild = interaction.guild.id;
-    const conversationHistory = chatHistories[guild];
+    const guildId = interaction.guild.id;
+    const conversationHistory = getHistory(guildId);
 
     if (!conversationHistory || conversationHistory.length === 0) {
-      await interaction.reply({ content: '> `No conversation history found.`', ephemeral: true });
+      const noHistoryEmbed = new EmbedBuilder()
+        .setColor(0xFF0000)
+        .setTitle('No History Found')
+        .setDescription('No server-wide conversation history found.');
+      await interaction.reply({ embeds: [noHistoryEmbed], ephemeral: true });
       return;
     }
 
     let conversationText = '';
     for (let i = 0; i < conversationHistory.length; i++) {
-      const speaker = i % 2 === 0 ? '[User]' : '[Model]';
-      conversationText += `${speaker}:\n${conversationHistory[i]}\n\n`;
+      const role = conversationHistory[i].role === 'user' ? '[User]' : '[Model]';
+      const content = conversationHistory[i].parts.map(c => c.text).join('\n');
+      conversationText += `${role}:\n${content}\n\n`;
     }
 
-    const tempFileName = path.join(__dirname, `${userId}_conversation.txt`);
+    const tempFileName = path.join(__dirname, `${guildId}_server_conversation.txt`);
     fs.writeFileSync(tempFileName, conversationText, 'utf8');
 
-    const file = new AttachmentBuilder(tempFileName, { name: 'conversation_history.txt' });
+    const file = new AttachmentBuilder(tempFileName, { name: 'server_conversation_history.txt' });
 
     if (interaction.channel.type === ChannelType.DM) {
-      await interaction.reply({ content: '> `Here\'s your conversation history:`', files: [file] });
+      const historyContentEmbed = new EmbedBuilder()
+        .setColor(0xFFFFFF)
+        .setTitle('Server Conversation History')
+        .setDescription("Here's the server-wide conversation history:");
+      await interaction.reply({ embeds: [historyContentEmbed], files: [file] });
     } else {
       try {
-        await interaction.user.send({ content: '> `Here\'s The Server-Wide conversation history:`', files: [file] });
-        await interaction.reply({ content: '> `Server-Wide conversation history has been sent to your DMs.`', ephemeral: true });
+        await interaction.user.send({ content: "> `Here's the server-wide conversation history:`", files: [file] });
+        const dmSentEmbed = new EmbedBuilder()
+          .setColor(0x00FF00)
+          .setTitle('History Sent')
+          .setDescription('Server-wide conversation history has been sent to your DMs.');
+        await interaction.reply({ embeds: [dmSentEmbed], ephemeral: true });
       } catch (error) {
         console.error(`Failed to send DM: ${error}`);
-        await interaction.reply({ content: '> `Here\'s The Server-Wide conversation history:`', files: [file], ephemeral: true });
+        const failDMEmbed = new EmbedBuilder()
+          .setColor(0xFF0000)
+          .setTitle('Delivery Failed')
+          .setDescription('Failed to send the server-wide conversation history to your DMs.');
+        await interaction.reply({ embeds: [failDMEmbed], files: [file], ephemeral: true });
       }
     }
 
-    fs.unlinkSync(tempFileName);
+    fs.unlinkSync(tempFileName); // Clean up the temporary file.
   } catch (error) {
-    console.log(error.message);
+    console.log(`Failed to download server conversation: ${error.message}`);
   }
 }
 
@@ -1838,170 +2261,139 @@ async function toggleServerPreference(interaction) {
     } else {
       serverSettings[guildId].responseStyle = "embedded";
     }
-    await interaction.reply({ content: `Server response style updated to: ${serverSettings[guildId].responseStyle}`, ephemeral: true});
+    const embed = new EmbedBuilder()
+      .setColor(0x00FF00)
+      .setTitle('Server Response Style Updated')
+      .setDescription(`Server response style updated to: ${serverSettings[guildId].responseStyle}`);
+
+    await interaction.reply({ embeds: [embed], ephemeral: true });
   } catch (error) {
     console.log(error.message);
   }
 }
 
-async function showSettings(interaction) {
-  if (interaction.guild) {
-    initializeBlacklistForGuild(interaction.guild.id);
-    if (blacklistedUsers[interaction.guild.id].includes(interaction.user.id)) {
-      return interaction.reply({ content: 'You are blacklisted and cannot use this interaction.', ephemeral: true });
+async function showSettings(interaction, edit = false) {
+  try {
+    if (interaction.guild) {
+      initializeBlacklistForGuild(interaction.guild.id);
+      if (blacklistedUsers[interaction.guild.id].includes(interaction.user.id)) {
+        const embed = new EmbedBuilder()
+          .setColor(0xFF0000)
+          .setTitle('Blacklisted')
+          .setDescription('You are blacklisted and cannot use this interaction.');
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
     }
-  }
-  // Define button configurations in an array
-  const buttonConfigs = [
-    {
-      customId: "clear",
-      label: "Clear Memory",
-      emoji: "🧹",
-      style: ButtonStyle.Danger,
-    },
-    {
-      customId: "custom-personality",
-      label: "Custom Personality",
-      emoji: "🙌",
-      style: ButtonStyle.Primary,
-    },
-    {
-      customId: "remove-personality",
-      label: "Remove Personality",
-      emoji: "🤖",
-      style: ButtonStyle.Danger,
-    },
-    {
-      customId: "generate-image",
-      label: "Generate Image",
-      emoji: "🎨",
-      style: ButtonStyle.Primary,
-    },
-    {
-      customId: "change-image-model",
-      label: "Change Image Model",
-      emoji: "👨‍🎨",
-      style: ButtonStyle.Secondary,
-    },
-    {
-      customId: "toggle-prompt-enhancer",
-      label: "Toggle Prompt Enhancer",
-      emoji: "🪄",
-      style: ButtonStyle.Secondary,
-    },
-    {
-      customId: "change-image-resolution",
-      label: "Change Image Resolution",
-      emoji: "🖼️",
-      style: ButtonStyle.Secondary,
-    },
-    {
-      customId: "generate-speech",
-      label: "Generate Speech",
-      emoji: "🎤",
-      style: ButtonStyle.Primary,
-    },
-    {
-      customId: "change-speech-model",
-      label: "Change Speech Model",
-      emoji: "🔈",
-      style: ButtonStyle.Secondary,
-    },
-    {
-      customId: "generate-music",
-      label: "Generate Music",
-      emoji: "🎹",
-      style: ButtonStyle.Primary,
-    },
-    {
-      customId: "generate-video",
-      label: "Generate Video",
-      emoji: "📹",
-      style: ButtonStyle.Primary,
-    },
-    {
-      customId: "always-respond",
-      label: "Always Respond",
-      emoji: "↩️",
-      style: ButtonStyle.Secondary,
-    },
-    {
-      customId: "toggle-response-mode",
-      label: "Toggle Response Mode",
-      emoji: "📝",
-      style: ButtonStyle.Secondary,
-    },
-    {
-      customId: "toggle-url-mode",
-      label: "Toggle URL Mode",
-      emoji: "🌐",
-      style: ButtonStyle.Secondary,
-    },
-    {
-      customId: "download-conversation",
-      label: "Download Conversation",
-      emoji: "🗃️",
-      style: ButtonStyle.Secondary,
-    },
-    {
-      customId: "exit",
-      label: "Exit Settings",
-      emoji: "✖",
-      style: ButtonStyle.Danger,
-    },
-  ];
 
-  // Generate buttons from configurations
-  const allButtons = buttonConfigs.map((config) =>
-    new ButtonBuilder()
+    const mainButtons = [
+      { customId: 'clear-memory', label: 'Clear Memory', emoji: '🧹', style: ButtonStyle.Danger },
+      { customId: 'general-settings', label: 'General Settings', emoji: '⚙️', style: ButtonStyle.Secondary },
+      { customId: 'image-settings', label: 'Image Settings', emoji: '🖼️', style: ButtonStyle.Secondary },
+      { customId: 'speech-settings', label: 'Speech Settings', emoji: '🎤', style: ButtonStyle.Secondary },
+      { customId: 'music-settings', label: 'Music Settings', emoji: '🎵', style: ButtonStyle.Secondary },
+    ];
+
+    const mainButtonsComponents = mainButtons.map(config =>
+      new ButtonBuilder()
       .setCustomId(config.customId)
       .setLabel(config.label)
       .setEmoji(config.emoji)
       .setStyle(config.style)
-  );
-
-  // Split buttons into action rows
-  const actionRows = [];
-  while (allButtons.length > 0) {
-    actionRows.push(
-      new ActionRowBuilder().addComponents(allButtons.splice(0, 5))
     );
-  }
 
-  // Reply to the interaction
-  let secondsLeft = 30;
-  const countdownMessage = `> **This Message Will Get Deleted In: ${secondsLeft}s**\n> \`\`\`Settings:\`\`\``;
+    const mainActionRow = new ActionRowBuilder().addComponents(...mainButtonsComponents);
 
-  await interaction.reply({
-    content: countdownMessage,
-    components: actionRows,
-  });
-  const countdownInterval = setInterval(async () => {
-    secondsLeft--;
-    if (secondsLeft > 0) {
-      try {
-        await interaction.editReply({
-          content: `> **This Message Will Get Deleted In: ${secondsLeft}s**\n> \`\`\`Settings:\`\`\``,
-          components: actionRows,
-        });
-      } catch (error) {
-        clearInterval(countdownInterval);
-      }
+    const embed = new EmbedBuilder()
+      .setColor(0x00FFFF)
+      .setTitle('Settings')
+      .setDescription('Please choose a category from the buttons below:');
+    if (edit) {
+      await interaction.update({ embeds: [embed], components: [mainActionRow], ephemeral: true });
     } else {
-      clearInterval(countdownInterval);
-      try {
-        interaction.deleteReply();
-      } catch (error) {}
+      await interaction.reply({ embeds: [embed], components: [mainActionRow], ephemeral: true });
     }
-  }, 1000);
+  } catch (error) {
+    console.error('Error showing settings:', error.message);
+  }
+}
+
+async function handleSubButtonInteraction(interaction, update = false) {
+  const channelId = interaction.channel.id;
+  const userId = interaction.user.id;
+  if (!activeUsersInChannels[channelId]) {
+    activeUsersInChannels[channelId] = {};
+  }
+  const responseMode = getUserResponsePreference(userId);
+  const subButtonConfigs = {
+    'general-settings': [
+      { customId: 'always-respond', label: `Always Respond: ${activeUsersInChannels[channelId][userId] ? 'ON' : 'OFF'}`, emoji: '↩️', style: ButtonStyle.Secondary },
+      { customId: 'toggle-response-mode', label: `Toggle Response Mode: ${responseMode}`, emoji: '📝', style: ButtonStyle.Secondary },
+      { customId: 'download-conversation', label: 'Download Conversation', emoji: '🗃️', style: ButtonStyle.Secondary },
+      ...(shouldDisplayPersonalityButtons ? [
+        { customId: 'custom-personality', label: 'Custom Personality', emoji: '🙌', style: ButtonStyle.Primary },
+        { customId: 'remove-personality', label: 'Remove Personality', emoji: '🤖', style: ButtonStyle.Danger },
+      ] : []),
+      { customId: 'back_to_main_settings', label: 'Back', emoji: '🔙', style: ButtonStyle.Secondary },
+    ],
+    'image-settings': [
+      { customId: 'generate-image', label: 'Generate Image', emoji: '🎨', style: ButtonStyle.Primary },
+      { customId: 'change-image-model', label: 'Change Image Model', emoji: '👨‍🎨', style: ButtonStyle.Secondary },
+      { customId: 'toggle-prompt-enhancer', label: 'Toggle Prompt Enhancer', emoji: '🪄', style: ButtonStyle.Secondary },
+      { customId: 'change-image-resolution', label: 'Change Image Resolution', emoji: '🖼️', style: ButtonStyle.Secondary },
+      { customId: 'back_to_main_settings', label: 'Back', emoji: '🔙', style: ButtonStyle.Secondary },
+    ],
+    'speech-settings': [
+      { customId: 'generate-speech', label: 'Generate Speech', emoji: '🎤', style: ButtonStyle.Primary },
+      { customId: 'change-speech-model', label: 'Change Speech Model', emoji: '🔈', style: ButtonStyle.Secondary },
+      { customId: 'back_to_main_settings', label: 'Back', emoji: '🔙', style: ButtonStyle.Secondary },
+    ],
+    'music-settings': [
+      { customId: 'generate-music', label: 'Generate Music', emoji: '🎹', style: ButtonStyle.Primary },
+      { customId: 'back_to_main_settings', label: 'Back', emoji: '🔙', style: ButtonStyle.Secondary },
+    ],
+  };
+
+  if (update || subButtonConfigs[interaction.customId]) {
+    const subButtons = subButtonConfigs[update ? 'general-settings' : interaction.customId].map(config =>
+      new ButtonBuilder()
+      .setCustomId(config.customId)
+      .setLabel(config.label)
+      .setEmoji(config.emoji)
+      .setStyle(config.style)
+    );
+
+    const actionRows = [];
+    while (subButtons.length > 0) {
+      actionRows.push(new ActionRowBuilder().addComponents(subButtons.splice(0, 5)));
+    }
+
+    await interaction.update({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x00FFFF)
+          .setTitle(`${update ? 'General Settings' : interaction.customId.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}`)
+          .setDescription('Please choose an option from the buttons below:'),
+      ],
+      components: actionRows,
+      ephemeral: true,
+    });
+  }
 }
 
 async function showDashboard(interaction) {
   if (interaction.channel.type === ChannelType.DM) {
-    return interaction.reply({ content: 'This command cannot be used in DMs.', ephemeral: true });
+    const embed = new EmbedBuilder()
+      .setColor(0xFF0000)
+      .setTitle('Command Restricted')
+      .setDescription('This command cannot be used in DMs.');
+    return interaction.reply({ embeds: [embed], ephemeral: true });
   }
   if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
-    return interaction.reply({ content: 'You need to be an admin to use this command.', ephemeral: true });
+    const embed = new EmbedBuilder()
+      .setColor(0xFF0000)
+      .setTitle('Administrator Required')
+      .setDescription('You need to be an admin to use this command.');
+    return interaction.reply({ embeds: [embed], ephemeral: true });
   }
   initializeBlacklistForGuild(interaction.guild.id);
   // Define button configurations in an array
@@ -2059,10 +2451,10 @@ async function showDashboard(interaction) {
   // Generate buttons from configurations
   const allButtons = buttonConfigs.map((config) =>
     new ButtonBuilder()
-      .setCustomId(config.customId)
-      .setLabel(config.label)
-      .setEmoji(config.emoji)
-      .setStyle(config.style)
+    .setCustomId(config.customId)
+    .setLabel(config.label)
+    .setEmoji(config.emoji)
+    .setStyle(config.style)
   );
 
   // Split buttons into action rows
@@ -2074,8 +2466,12 @@ async function showDashboard(interaction) {
   }
 
   // Reply to the interaction with settings buttons, without any countdown message
+  const embed = new EmbedBuilder()
+    .setColor(0xFFFFFF)
+    .setTitle('Settings')
+    .setDescription('Your Server Settings:');
   await interaction.reply({
-    content: "> ```Dashboard:```",
+    embeds: [embed],
     components: actionRows,
     ephemeral: true
   });
@@ -2089,21 +2485,49 @@ async function showDashboard(interaction) {
 
 async function addDownloadButton(botMessage) {
   try {
-    const settingsButton = new ButtonBuilder()
-      .setCustomId('settings')
-      .setEmoji('⚙️')
-      .setStyle(ButtonStyle.Secondary);
-
+    const messageComponents = botMessage.components || [];
     const downloadButton = new ButtonBuilder()
       .setCustomId('download_message')
       .setLabel('Save')
       .setEmoji('⬇️')
       .setStyle(ButtonStyle.Secondary);
 
-    const actionRow = new ActionRowBuilder().addComponents(settingsButton, downloadButton);
-    await botMessage.edit({ components: [actionRow] });
+    let actionRow;
+    if (messageComponents.length > 0 && messageComponents[0].type === ComponentType.ActionRow) {
+      actionRow = ActionRowBuilder.from(messageComponents[0]);
+    } else {
+      actionRow = new ActionRowBuilder();
+    }
+
+    actionRow.addComponents(downloadButton);
+    return await botMessage.edit({ components: [actionRow] });
   } catch (error) {
-    console.log(error.message);
+    console.error('Error adding download button:', error.message);
+    return botMessage;
+  }
+}
+
+async function addDeleteButton(botMessage, msgId) {
+  try {
+    const messageComponents = botMessage.components || [];
+    const downloadButton = new ButtonBuilder()
+      .setCustomId(`delete_message-${msgId}`)
+      .setLabel('Delete')
+      .setEmoji('🗑️')
+      .setStyle(ButtonStyle.Secondary);
+
+    let actionRow;
+    if (messageComponents.length > 0 && messageComponents[0].type === ComponentType.ActionRow) {
+      actionRow = ActionRowBuilder.from(messageComponents[0]);
+    } else {
+      actionRow = new ActionRowBuilder();
+    }
+
+    actionRow.addComponents(downloadButton);
+    return await botMessage.edit({ components: [actionRow] });
+  } catch (error) {
+    console.error('Error adding delete button:', error.message);
+    return botMessage;
   }
 }
 
@@ -2115,180 +2539,17 @@ async function addSettingsButton(botMessage) {
       .setStyle(ButtonStyle.Secondary);
 
     const actionRow = new ActionRowBuilder().addComponents(settingsButton);
-    await botMessage.edit({ components: [actionRow] });
+    return await botMessage.edit({ components: [actionRow] });
   } catch (error) {
-    console.log(error.message);
-  }
-}
-
-async function fetchImageAsBuffer(url) {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Failed to fetch the image: ${response.statusText}`);
-    const buffer = await response.buffer();
-    return buffer;
-  } catch (error) {
-    console.log(error.message);
+    console.log('Error adding settings button:', error.message);
+    return botMessage;
   }
 }
 
 // Function to get user preference
-function getUserPreference(userId) {
+function getUserResponsePreference(userId) {
   return userResponsePreference[userId] || defaultResponseFormat;
 }
-
-function getUrlUserPreference(userId) {
-  return userPreferredUrlHandle[userId] || defaultUrlReading;
-}
-
-// Function to extract text from a PDF file
-async function extractTextFromPDF(pdfUrl) {
-  try {
-    const response = await fetch(pdfUrl);
-    const pdfBuffer = await response.buffer();
-    const data = await pdfParse(pdfBuffer);
-    return data.text;
-  } catch (error) {
-    console.error(error.message);
-    throw new Error('Could not extract text from PDF');
-  }
-}
-
-// Function to fetch text from a plaintext file
-async function fetchTextFile(url) {
-  try {
-    const response = await fetch(url);
-    return await response.text();
-  } catch (error) {
-    console.error('Error fetching text file:', error);
-    throw new Error('Could not fetch text from file');
-  }
-}
-
-// Function to compress and resize an image
-async function compressImage(buffer) {
-  const maxDimension = 3072;
-
-  return sharp(buffer)
-    .resize(maxDimension, maxDimension, {
-      fit: sharp.fit.inside,
-      withoutEnlargement: true
-    })
-    .jpeg({ quality: 80 })
-    .toBuffer();
-}
-
-function hasImageAttachments(message) {
-  return message.attachments.some((attachment) =>
-    attachment.contentType?.startsWith('image/')
-  );
-}
-
-function hasTextFileAttachments(message) {
-  const supportedMimeTypes = [
-    'application/pdf', 'text/plain', 'text/html', 'text/css',
-    'application/javascript', 'text/x-python', 'application/json',
-    'application/x-yaml', 'text/markdown', 'application/xml'
-  ];
-
-  const supportedFileExtensions = [
-    'md', 'yaml', 'yml', 'xml', 'env', 'sh', 'bat', 'rb', 'c', 'cpp', 'cc',
-    'cxx', 'h', 'hpp', 'java'
-  ];
-
-  return message.attachments.some((attachment) => {
-    const fileMimeType = attachment.contentType?.split(';')[0].trim();
-    const fileExtension = attachment.name.split('.').pop().toLowerCase();
-
-    return supportedMimeTypes.includes(fileMimeType) || supportedFileExtensions.includes(fileExtension);
-  });
-}
-
-async function fetchTextContent(url) {
-  try {
-    const response = await fetch(url);
-    return await response.text();
-  } catch (error) {
-    console.error('Error fetching text content:', error);
-    throw new Error('Could not fetch text content from file');
-  }
-}
-
-async function scrapeWebpageContent(url) {
-  try {
-    const timeoutPromise = new Promise((resolve, reject) => {
-      setTimeout(() => reject(new Error("Timeout")), 5000);
-    });
-    const response = await Promise.race([
-      fetch(url),
-      timeoutPromise
-    ]);
-    const html = await response.text();
-    const $ = cheerio.load(html);
-    $('script, style').remove();
-    let bodyText = $('body').text();
-    bodyText = bodyText.replace(/<[^>]*>?/gm, '');
-    return bodyText.trim();
-  } catch (error) {
-    console.error('Error:', error);
-    if (error.message === 'Timeout') {
-      return "ERROR: The website is not responding..";
-    } else {
-      throw new Error('Could not scrape content from webpage');
-    }
-  }
-}
-
-async function handleUrlsInMessage(urls, messageContent, botMessage, originalMessage) {
-  const model = await genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest" }, { apiVersion: 'v1beta' });
-  const isServerChatHistoryEnabled = originalMessage.guild ? serverSettings[originalMessage.guild.id]?.serverChatHistory : false;
-  const chat = model.startChat({
-    history: isServerChatHistoryEnabled ? getHistory(originalMessage.guild.id) : getHistory(originalMessage.author.id),
-    safetySettings,
-  });
-
-  let contentIndex = 1;
-  let contentWithUrls = messageContent;
-  for (const url of urls) {
-    try {
-      if (url.includes('youtu.be') || url.includes('youtube.com')) {
-        const videoId = extractYouTubeVideoId(url);
-        const transcriptData = await YoutubeTranscript.fetchTranscript(videoId);
-        const transcriptText = transcriptData.map(item => item.text).join(' ');
-        contentWithUrls += `\n\n[Transcript Of Video ${url}]:\n"${transcriptText}"`;
-      } else {
-        // For non-video URLs, attempt to scrape webpage content
-        const webpageContent = await scrapeWebpageContent(url);
-        contentWithUrls += `\n\n[Text Inside The Website ${url}]:\n"${webpageContent}"`;
-      }
-      // In both cases, replace the URL with a reference in the text
-      contentWithUrls = contentWithUrls.replace(url, `[Reference Number ${contentIndex}](${url})`);
-      contentIndex++;
-    } catch (error) {
-      console.error('Error handling URL:', error);
-      contentWithUrls += `\n\n[Error]: Can't access content from the [URL ${contentIndex}](${url}), likely due to bot blocking. Mention if you were blocked in your reply.`;
-    }
-  }
-  // After processing all URLs, continue with the chat response
-  await handleModelResponse(botMessage, () => chat.sendMessageStream(contentWithUrls), originalMessage);
-}
-
-function extractYouTubeVideoId(url) {
-  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-  const match = url.match(regExp);
-
-  return (match && match[2].length === 11) ? match[2] : null;
-}
-
-function extractUrls(text) {
-  return text.match(/\bhttps?:\/\/\S+/gi) || [];
-}
-
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-const safetySettings = [{ category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE, }, { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE, }, { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE, }, { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE, }, ];
 
 // <==========>
 
@@ -2296,50 +2557,79 @@ const safetySettings = [{ category: HarmCategory.HARM_CATEGORY_HARASSMENT, thres
 
 // <=====[Model Response Handling]=====>
 
-async function handleModelResponse(botMessage, responseFunc, originalMessage) {
+async function handleModelResponse(initialBotMessage, chat, parts, originalMessage, typingInterval, historyId) {
   const userId = originalMessage.author.id;
-  const userPreference = originalMessage.guild && serverSettings[originalMessage.guild.id]?.serverResponsePreference ? serverSettings[originalMessage.guild.id].responseStyle : getUserPreference(userId);
-  const maxCharacterLimit = userPreference === 'embedded' ? 3900 : 1900;
+  const userResponsePreference = originalMessage.guild && serverSettings[originalMessage.guild.id]?.serverResponsePreference ? serverSettings[originalMessage.guild.id].responseStyle : getUserResponsePreference(userId);
+  const maxCharacterLimit = userResponsePreference === 'embedded' ? 3900 : 1900;
   let attempts = 3;
 
   let updateTimeout;
   let tempResponse = '';
-
-  const row = new ActionRowBuilder()
+  let functionCallsString = '';
+  const stopGeneratingButton = new ActionRowBuilder()
     .addComponents(
       new ButtonBuilder()
-        .setCustomId('stopGenerating')
-        .setLabel('Stop Generating')
-        .setStyle(ButtonStyle.Danger)
+      .setCustomId('stopGenerating')
+      .setLabel('Stop Generating')
+      .setStyle(ButtonStyle.Danger)
     );
-
-  await botMessage.edit({components: [row] });
+  let botMessage;
+  if (!initialBotMessage) {
+    clearInterval(typingInterval);
+    try {
+      botMessage = await originalMessage.reply({ content: 'Let me think..', components: [stopGeneratingButton] });
+    } catch (error) {}
+  } else {
+    botMessage = initialBotMessage;
+    try {
+      botMessage.edit({ components: [stopGeneratingButton] });
+    } catch (error) {}
+  }
 
   let stopGeneration = false;
-
-  const filter = (interaction) => interaction.customId === 'stopGenerating' && interaction.user.id === originalMessage.author.id;
-  const collector = botMessage.createMessageComponentCollector({ filter, time: 300000 });
-
+  const filter = (interaction) => interaction.customId === 'stopGenerating';
   try {
-    collector.on('collect', async (interaction) => {
-      try {
-        await interaction.reply({ content: 'Response generation stopped by the user.', ephemeral: true });
-      } catch(error) {}
-      stopGeneration = true;
-    });
-  } catch(error) {}
+    const collector = await botMessage.createMessageComponentCollector({ filter, time: 120000 });
+    collector.on('collect', (interaction) => {
+      if (interaction.user.id === originalMessage.author.id) {
+        try {
+          const embed = new EmbedBuilder()
+            .setColor(0xFFA500)
+            .setTitle('Response Stopped')
+            .setDescription('Response generation stopped by the user.');
 
-  const updateMessage = async () => {
+          interaction.reply({ embeds: [embed], ephemeral: true });
+        } catch (error) {
+          console.error('Error sending reply:', error);
+        }
+        stopGeneration = true;
+      } else {
+        try {
+          const embed = new EmbedBuilder()
+            .setColor(0xFF0000)
+            .setTitle('Access Denied')
+            .setDescription("It's not for you.");
+
+          interaction.reply({ embeds: [embed], ephemeral: true });
+        } catch (error) {
+          console.error('Error sending unauthorized reply:', error);
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error creating or handling collector:', error);
+  }
+
+  const updateMessage = () => {
     if (stopGeneration) {
       return;
     }
     if (tempResponse.trim() === "") {
-      await botMessage.edit({ content: '...' });
-    }
-    if (userPreference === 'embedded') {
-      await updateEmbed(botMessage, tempResponse, originalMessage);
+      botMessage.edit({ content: '...' });
+    } else if (userResponsePreference === 'embedded') {
+      updateEmbed(botMessage, tempResponse, originalMessage, functionCallsString);
     } else {
-      await botMessage.edit({ content: tempResponse });
+      botMessage.edit({ content: tempResponse, embeds: [] });
     }
     clearTimeout(updateTimeout);
     updateTimeout = null;
@@ -2347,61 +2637,114 @@ async function handleModelResponse(botMessage, responseFunc, originalMessage) {
 
   while (attempts > 0 && !stopGeneration) {
     try {
-      const messageResult = await responseFunc();
       let finalResponse = '';
       let isLargeResponse = false;
+      const newHistory = [];
+      newHistory.push({ role: 'user', content: parts });
+      async function getResponse(parts) {
+        let newResponse = '';
+        const messageResult = await chat.sendMessageStream(parts);
+        for await (const chunk of messageResult.stream) {
+          if (stopGeneration) break;
 
-      for await (const chunk of messageResult.stream) {
-        if (stopGeneration) break;
+          const chunkText = chunk.text();
+          finalResponse += chunkText;
+          tempResponse += chunkText;
+          newResponse += chunkText;
 
-        const chunkText = await chunk.text();
-        finalResponse += chunkText;
-        tempResponse += chunkText;
-
-        if (finalResponse.length > maxCharacterLimit) {
-          if (!isLargeResponse) {
-            isLargeResponse = true;
-            await botMessage.edit({ content: '> `The response is too large and will be sent as a text file once it is ready.`' });
+          const toolCalls = chunk.functionCalls();
+          if (toolCalls) {
+            newHistory.push({ role: 'assistant', content: [{ text: newResponse }] });
+            newResponse = '';
+            function convertArrayFormat(inputArray) {
+              return inputArray.map(item => ({
+                functionCall: {
+                  name: item.name,
+                  args: item.args
+                }
+              }));
+            }
+            const modelParts = convertArrayFormat(toolCalls);
+            newHistory.push({ role: 'assistant', content: modelParts });
+            const toolCallsResults = [];
+            for (const toolCall of toolCalls) {
+              const result = await manageToolCall(toolCall);
+              toolCallsResults.push(result);
+            }
+            newHistory.push({ role: 'user', content: toolCallsResults });
+            functionCallsString = functionCallsString.trim() + '\n' + `- ${processFunctionCallsNames(toolCalls)}`;
+            return await getResponse(toolCallsResults);
           }
-        } else if (!updateTimeout) {
-          updateTimeout = setTimeout(updateMessage, 500);
+
+          if (finalResponse.length > maxCharacterLimit) {
+            if (!isLargeResponse) {
+              isLargeResponse = true;
+              const embed = new EmbedBuilder()
+                .setColor(0xFFFF00)
+                .setTitle('Response Overflow')
+                .setDescription('The response got too large, will be sent as a text file once it is completed.');
+
+              botMessage.edit({ embeds: [embed] });
+            }
+          } else if (!updateTimeout) {
+            updateTimeout = setTimeout(updateMessage, 500);
+          }
         }
+        newHistory.push({ role: 'assistant', content: [{ text: newResponse }] });
       }
+      await getResponse(parts);
 
-      if (updateTimeout) {
-        await updateMessage();
-      }
-
+      botMessage = await addSettingsButton(botMessage);
       if (isLargeResponse) {
-        await sendAsTextFile(finalResponse, originalMessage);
-        await addSettingsButton(botMessage);
+        sendAsTextFile(finalResponse, originalMessage, botMessage.id);
+        botMessage = await addDeleteButton(botMessage, botMessage.id);
       } else {
         const shouldAddDownloadButton = originalMessage.guild ? serverSettings[originalMessage.guild.id]?.settingsSaveButton : true;
         if (shouldAddDownloadButton) {
-          await addDownloadButton(botMessage);
+          botMessage = await addDownloadButton(botMessage);
+          botMessage = await addDeleteButton(botMessage, botMessage.id);
         } else {
-          await botMessage.edit({components: [] });
+          botMessage.edit({ components: [] });
         }
       }
-      const isServerChatHistoryEnabled = originalMessage.guild ? serverSettings[originalMessage.guild.id]?.serverChatHistory : false;
-      updateChatHistory(isServerChatHistoryEnabled ? originalMessage.guild.id : userId, originalMessage.content.replace(new RegExp(`<@!?${client.user.id}>`), '').trim(), finalResponse);
+      updateChatHistory(historyId, newHistory, botMessage.id);
       break;
     } catch (error) {
       if (activeRequests.has(userId)) {
         activeRequests.delete(userId);
       }
-      console.error(error.message);
+      console.error('Generation Attempt Failed: ', error);
       attempts--;
 
       if (attempts === 0 || stopGeneration) {
         if (!stopGeneration) {
-          const errorMsg = await originalMessage.channel.send({ content: `<@${originalMessage.author.id}>, All Generation Attempts Failed :( \`\`\`${error.message}\`\`\`` });
-          await addSettingsButton(errorMsg);
-          await addSettingsButton(botMessage);
+          if (SEND_RETRY_ERRORS_TO_DISCORD) {
+            const embed = new EmbedBuilder()
+              .setColor(0xFF0000)
+              .setTitle('Generation Failure')
+              .setDescription(`All Generation Attempts Failed :(\n\`\`\`${error.message}\`\`\``);
+            const errorMsg = await originalMessage.channel.send({ content: `<@${originalMessage.author.id}>`, embeds: [embed] });
+            await addSettingsButton(errorMsg);
+            await addSettingsButton(botMessage);
+          } else {
+            const simpleErrorEmbed = new EmbedBuilder()
+              .setColor(0xFF0000)
+              .setTitle('Bot Overloaded')
+              .setDescription('Something seems off, the bot might be overloaded! :(');
+            const errorMsg = await originalMessage.channel.send({ content: `<@${originalMessage.author.id}>`, embeds: [simpleErrorEmbed] });
+            await addSettingsButton(errorMsg);
+            await addSettingsButton(botMessage);
+          }
         }
         break;
-      } else {
-        const errorMsg = await originalMessage.channel.send({ content: `<@${originalMessage.author.id}>, Generation Attempts Failed, Retrying.. \`\`\`${error.message}\`\`\`` });
+      } else if (SEND_RETRY_ERRORS_TO_DISCORD) {
+        const errorMsg = await originalMessage.channel.send({
+          content: `<@${originalMessage.author.id}>`,
+          embeds: [new EmbedBuilder()
+            .setColor(0xFFFF00)
+            .setTitle('Retry in Progress')
+            .setDescription(`Generation Attempt(s) Failed, Retrying..\n\`\`\`${error.message}\`\`\``)]
+        });
         setTimeout(() => errorMsg.delete().catch(console.error), 5000);
         await delay(500);
       }
@@ -2413,31 +2756,37 @@ async function handleModelResponse(botMessage, responseFunc, originalMessage) {
   }
 }
 
-async function updateEmbed(botMessage, finalResponse, message) {
+function updateEmbed(botMessage, finalResponse, message, functionCallsString) {
   try {
     const isGuild = message.guild !== null;
     const embed = new EmbedBuilder()
-      .setColor(0x505050)
+      .setColor(hexColour)
       .setDescription(finalResponse)
       .setAuthor({ name: `To ${message.author.displayName}`, iconURL: message.author.displayAvatarURL() })
       .setTimestamp();
+
     if (isGuild) {
       embed.setFooter({ text: message.guild.name, iconURL: message.guild.iconURL() || 'https://ai.google.dev/static/site-assets/images/share.png' });
     }
 
-    await botMessage.edit({ content: ' ', embeds: [embed] });
-  } catch(error) {
+    if (functionCallsString.trim().length > 0) {
+      embed.addFields({ name: 'Function Calls:', value: functionCallsString });
+    }
+
+    botMessage.edit({ content: ' ', embeds: [embed] });
+  } catch (error) {
     console.error("An error occurred while updating the embed:", error.message);
   }
 }
 
-async function sendAsTextFile(text, message) {
+async function sendAsTextFile(text, message, orgId) {
   try {
     const filename = `response-${Date.now()}.txt`;
     await writeFile(filename, text);
 
     const botMessage = await message.channel.send({ content: `<@${message.author.id}>, Here is the response:`, files: [filename] });
     await addSettingsButton(botMessage);
+    await addDeleteButton(botMessage, orgId);
 
     // Cleanup: Remove the file after sending it
     await unlink(filename);
@@ -2446,861 +2795,34 @@ async function sendAsTextFile(text, message) {
   }
 }
 
-async function attachmentToPart(attachment) {
-  try {
-    const response = await fetch(attachment.url);
-    const buffer = await response.buffer();
-    return { inlineData: { data: buffer.toString('base64'), mimeType: attachment.contentType } };
-  } catch (error) {
-    console.log(error.message);
-  }
-}
-
 function getHistory(id) {
-  return chatHistories[id]?.map((line, index) => ({
-    role: index % 2 === 0 ? 'user' : 'model',
-    parts: [{ text: line }],
-  })) || [];
-}
+  const historyObject = chatHistories[id] || {};
+  let combinedHistory = [];
 
-function updateChatHistory(id, userMessage, modelResponse) {
-  if (!chatHistories[id]) {
-    chatHistories[id] = [];
-  }
-  chatHistories[id].push(userMessage);
-  chatHistories[id].push(modelResponse);
-}
-
-// <==========>
-
-
-
-// <=====[Gen Function Handling]=====>
-
-async function retryOperation(fn, maxRetries, delayMs = 1000) {
-  let error;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      console.log(`Attempt ${attempt} failed`);
-      error = err;
-      if (attempt < maxRetries) {
-        console.log(`Waiting ${delayMs}ms before next attempt...`);
-        await delay(delayMs);
-      } else {
-        console.log(`All ${maxRetries} Attempts failed`);
-      }
+  for (const messagesId in historyObject) {
+    if (historyObject.hasOwnProperty(messagesId)) {
+      combinedHistory = [...combinedHistory, ...historyObject[messagesId]];
     }
   }
-  throw new Error(error);
-}
 
-function getEventId() {
-  const randomBytes = crypto.randomBytes(16);
-  const hexString = randomBytes.toString('hex');
-  return hexString;
-}
-
-async function fetchAndExtractRootUrl(url) {
-  try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    const htmlContent = await response.text();
-
-    const rootMatch = htmlContent.match(/window\.gradio_config = (.*?});/s);
-    if (rootMatch) {
-      const gradioConfig = JSON.parse(rootMatch[1]);
-      return gradioConfig.root;
-    } else {
-      throw new Error("Could not extract root value.");
-    }
-  } catch (error) {
-    console.error('Failed to fetch:', error);
-    return null;
-  }
-}
-
-function generateSessionHash() {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let result = '';
-  for (let i = 0; i < 5; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
-
-function generateRandomDigits() {
-  return Math.floor(Math.random() * (999999999 - 100000000 + 1) + 100000000);
-}
-
-async function speechGen(prompt, language) {
-  let x, y;
-  if (language == 'English') {
-    x = 'EN';
-    y = 'EN-Default';
-  } else {
-    switch (language) {
-      case 'Spanish':
-        x = y = 'ES';
-        break;
-      case 'French':
-        x = y = 'FR';
-        break;
-      case 'Chinese':
-        x = y = 'ZH';
-        break;
-      case 'Korean':
-        x = y = 'KR';
-        break;
-      case 'Japanese':
-        x = y = 'JP';
-        break;
-      default:
-        x = 'EN';
-        y = 'EN-Default';
-    }
-  }
-  const sessionHash = generateSessionHash();
-  const urlFirstRequest = 'https://mrfakename-melotts.hf.space/queue/join?';
-  const dataFirstRequest = {
-    data: [y, prompt, 1, x],
-    event_data: null,
-    fn_index: 1,
-    trigger_id: 8,
-    session_hash: sessionHash
-  };
-
-  try {
-    const responseFirst = await axios.post(urlFirstRequest, dataFirstRequest);
-  } catch (error) {
-    console.error("Error in the first request:", error);
-    return null;
-  }
-
-  const urlSecondRequest = `https://mrfakename-melotts.hf.space/queue/data?session_hash=${sessionHash}`;
-  return new Promise((resolve, reject) => {
-    try {
-      axios.get(urlSecondRequest, {
-        responseType: 'stream'
-      }).then(responseSecond => {
-        let fullData = '';
-
-        responseSecond.data.on('data', (chunk) => {
-          fullData += chunk.toString();
-
-          if (fullData.includes('"msg": "process_completed"')) {
-            const lines = fullData.split('\n');
-            for (const line of lines) {
-              if (line.includes('"msg": "process_completed"')) {
-                try {
-                  const dataDict = JSON.parse(line.slice(line.indexOf('{')));
-                  const fullUrl = dataDict?.output?.data?.[0]?.url;
-                  resolve(fullUrl);
-                  break;
-                } catch (parseError) {
-                  console.error("Parsing error:", parseError);
-                  reject(parseError);
-                }
-              }
-            }
-          }
-        });
-      }).catch(error => {
-        console.error("Error in second request event stream:", error);
-        reject(error);
-      });
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-async function musicGen(prompt) {
-  let socket;
-  try {
-    const sessionHash = generateSessionHash();
-    const banner = bannerMusicGen;
-
-    // WebSocket connection promise
-    const socketPromise = new Promise((resolve, reject) => {
-      socket = new WebSocket('wss://surn-unlimitedmusicgen.hf.space/queue/join');
-      socket.onopen = () => {
-        console.log('WebSocket connection established');
-        resolve();
-      };
-      socket.onerror = (error) => {
-        console.error('WebSocket error.');
-        reject(new Error('WebSocket connection error'));
-      };
-    });
-
-    // Wait for socket to be ready
-    await socketPromise;
-
-    // Send and process messages
-    const url = await new Promise((resolve, reject) => {
-      socket.onmessage = (message) => {
-        const data = JSON.parse(message.data);
-
-        if (data.msg === 'send_hash') {
-          socket.send(JSON.stringify({
-            fn_index: 0,
-            session_hash: sessionHash,
-          }));
-        } else if (data.msg === 'send_data') {
-          socket.send(JSON.stringify({
-            data: ['large', prompt, null, 30, 2, 280, 1150, 0.7, 8.5, banner, 'MusicGen', './assets/arial.ttf', '#fff', -1, 2, 0, true, false, 'No'],
-            event_data: null,
-            fn_index: 5,
-            session_hash: sessionHash,
-          }));
-        } else if (data.msg === 'process_completed') {
-          const name = data?.output?.data?.[0]?.[0]?.name;
-          const url = `https://surn-unlimitedmusicgen.hf.space/file=${name}`;
-          resolve(url);
-        }
-      };
-
-      socket.onerror = () => {
-        reject(new Error('WebSocket encountered an error during message handling.'));
-      };
-
-      socket.onclose = () => {
-        console.log('WebSocket connection closed');
-        reject(new Error('WebSocket connection was closed unexpectedly.'));
-      };
-    });
-
-    return url;
-  } catch (error) {
-    console.error('musicGen error:', error.message);
-    if (socket && socket.readyState !== WebSocket.CLOSED) {
-      socket.close();
-    }
-    throw error;
-  }
-}
-
-async function videoGen(prompt) {
-  const sessionHash = generateSessionHash();
-  const urlFirstRequest = 'https://bytedance-animatediff-lightning.hf.space/queue/join?';
-  const dataFirstRequest = {
-    data: [prompt, "epiCRealism", "", 8],
-    event_data: null,
-    fn_index: 1,
-    trigger_id: 10,
-    session_hash: sessionHash
-  };
-
-  try {
-    const responseFirst = await axios.post(urlFirstRequest, dataFirstRequest);
-  } catch (error) {
-    console.error("Error in the first request:", error);
-    return null;
-  }
-
-  const urlSecondRequest = `https://bytedance-animatediff-lightning.hf.space/queue/data?session_hash=${sessionHash}`;
-  return new Promise((resolve, reject) => {
-    try {
-      axios.get(urlSecondRequest, {
-        responseType: 'stream'
-      }).then(responseSecond => {
-        let fullData = '';
-
-        responseSecond.data.on('data', (chunk) => {
-          fullData += chunk.toString();
-
-          if (fullData.includes('"msg": "process_completed"')) {
-            const lines = fullData.split('\n');
-            for (const line of lines) {
-              if (line.includes('"msg": "process_completed"')) {
-                try {
-                  const dataDict = JSON.parse(line.slice(line.indexOf('{')));
-                  const fullUrl = dataDict?.output?.data?.[0]?.video?.url;
-                  resolve(fullUrl);
-                  break;
-                } catch (parseError) {
-                  console.error("Parsing error:", parseError);
-                  reject(parseError);
-                }
-              }
-            }
-          }
-        });
-      }).catch(error => {
-        console.error("Error in second request event stream:", error);
-        reject(error);
-      });
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-function generateWithSC(prompt,  resolution) {
-  let width, height;
-  if (resolution == 'Square') {
-    width = 1024;
-    height = 1024;
-  } else if (resolution == 'Wide') {
-    width = 1280;
-    height = 768;
-  } else if (resolution == 'Portrait') {
-    width = 768;
-    height = 1280;
-  }
-  return new Promise(async (resolve, reject) => {
-    try {
-      const randomDigit = generateRandomDigits();
-      const sessionHash = generateSessionHash();
-
-      await fetch("https://multimodalart-stable-cascade.hf.space/run/predict", {
-        method: "POST",
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          "data": [0, true],
-          "event_data": null,
-          "fn_index": 2,
-          "trigger_id": 6,
-          "session_hash": sessionHash
-        })
-      });
-
-      // Second request to initiate the image generation
-      const queueResponse = await fetch("https://multimodalart-stable-cascade.hf.space/queue/join?", {
-        method: "POST",
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          "data": [prompt, nevPrompt, randomDigit, width, height, 30, 4, 12, 0, 1],
-          "event_data": null,
-          "fn_index": 3,
-          "trigger_id": 6,
-          "session_hash": sessionHash
-        })
-      });
-
-      // Setting up event source for listening to the progress
-      const es = new EventSource(`https://multimodalart-stable-cascade.hf.space/queue/data?session_hash=${sessionHash}`);
-      es.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.msg === 'process_completed') {
-          es.close();
-          if (!data?.output?.data?.[0]?.url) {
-            reject(new Error("Output URL is missing"));
-          } else {
-            const outputUrl = data.output.data[0].url;
-            resolve({ images: [{ url: outputUrl }], modelUsed: "Stable-Cascade" });
-          }
-        }
-      };
-
-      es.onerror = (error) => {
-        es.close();
-        reject(error);
-      };
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-async function generateWithPlayground(prompt, resolution) {
-  let width, height;
-  if (resolution == 'Square') {
-    width = 1024;
-    height = 1024;
-  } else if (resolution == 'Wide') {
-    width = 1280;
-    height = 768;
-  } else if (resolution == 'Portrait') {
-    width = 768;
-    height = 1280;
-  }
-  return new Promise(async (resolve, reject) => {
-    try {
-      const session_hash = generateSessionHash();
-      const event_id = getEventId();
-      const randomDigit = generateRandomDigits();
-      const rootUrl = await fetchAndExtractRootUrl("https://playgroundai-playground-v2-5.hf.space/");
-
-      const urlJoinQueue = `https://playgroundai-playground-v2-5.hf.space/queue/join?fn_index=3&session_hash=${session_hash}`;
-      const eventSource = new EventSource(urlJoinQueue);
-
-      eventSource.onmessage = async (event) => {
-        const data = JSON.parse(event.data);
-        if (data.msg === "send_data") {
-          const eventId = data?.event_id;
-          fetch("https://playgroundai-playground-v2-5.hf.space/queue/data", {
-            method: "POST",
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              data: [prompt, nevPrompt, true, randomDigit, width, height, 3, true],
-              event_data: null,
-              fn_index: 3,
-              trigger_id: 6,
-              session_hash: session_hash,
-              event_id: eventId
-            })
-          });
-        } else if (data.msg === "process_completed") {
-          eventSource.close();
-          const imagePaths = data?.output?.data[0];
-          const firstImagePath = imagePaths.length > 0 ? imagePaths[0].image.path : null;
-
-          if (firstImagePath) {
-            const fullUrl = `${rootUrl}/file=${firstImagePath}`;
-            resolve({ images: [{ url: fullUrl }], modelUsed: "Playground" });
-          } else {
-            reject(new Error('No image path found in the process_completed message.'));
-          }
-        }
-      };
-
-      eventSource.onerror = (error) => {
-        eventSource.close();
-        reject(error);
-      };
-
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-function generateWithDallEXL(prompt, resolution) {
-  let width, height;
-  if (resolution == 'Square') {
-    width = 1024;
-    height = 1024;
-  } else if (resolution == 'Wide') {
-    width = 1280;
-    height = 768;
-  } else if (resolution == 'Portrait') {
-    width = 768;
-    height = 1280;
-  }
-  return new Promise(async (resolve, reject) => {
-    try {
-      const randomDigits = generateRandomDigits();
-      const sessionHash = generateSessionHash();
-
-      // First request to join the queue
-      await fetch("https://ehristoforu-dalle-3-xl-lora-v2.hf.space/queue/join?", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          data: [prompt, nevPrompt, true, randomDigits, width, height, 6, true],
-          event_data: null,
-          fn_index: 3,
-          trigger_id: 6,
-          session_hash: sessionHash
-        }),
-      });
-
-      // Replace this part to use EventSource for listening to the event stream
-      const es = new EventSource(`https://ehristoforu-dalle-3-xl-lora-v2.hf.space/queue/data?session_hash=${sessionHash}`);
-
-      es.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.msg === 'process_completed') {
-          es.close();
-          const outputUrl = data?.output?.data?.[0]?.[0]?.image?.url;
-          if (!outputUrl) {
-            reject(new Error("Output URL does not exist, path might be invalid."));
-          } else {
-            resolve({ images: [{ url: outputUrl }], modelUsed: "DallE-XL" });
-          }
-        }
-      };
-
-      es.onerror = (error) => {
-        es.close();
-        reject(error);
-      };
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-function generateWithAnime(prompt, resolution) {
-  let size;
-  if (resolution == 'Square') {
-    size = '1024 x 1024';
-  } else if (resolution == 'Wide') {
-    size = '1344 x 768';
-  } else if (resolution == 'Portrait') {
-    size = '896 x 1152';
-  }
-  return new Promise(async (resolve, reject) => {
-    const randomDigit = generateRandomDigits();
-    const sessionHash = generateSessionHash();
-
-    try {
-      // First request to initiate the process
-      await fetch("https://cagliostrolab-animagine-xl-3-1.hf.space/queue/join?", {
-        method: "POST",
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          data: [
-            prompt, `(rating_explicit:1.2), ${nevPrompt}`, randomDigit, 1024, 1024, 4, 35, "DPM++ 2M SDE Karras", size,"(None)", "Standard v3.1", false, 0.55, 1.5, true
-          ],
-          event_data: null,
-          fn_index: 5,
-          trigger_id: 49,
-          session_hash: sessionHash,
-        }),
-      });
-
-      // Using EventSource to listen for server-sent events
-      const es = new EventSource(`https://cagliostrolab-animagine-xl-3-1.hf.space/queue/data?session_hash=${sessionHash}`);
-
-      es.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.msg === 'process_completed') {
-          es.close();
-          const outputUrl = data?.output?.data?.[0]?.[0]?.image?.url;
-          if (!outputUrl) {
-            reject(new Error('Invalid or missing output URL'));
-          } else {
-            resolve({ images: [{ url: outputUrl }], modelUsed: "Anime" });
-          }
-        }
-      };
-
-      es.onerror = (error) => {
-        es.close();
-        reject(error);
-      };
-
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-function generateWithSDXLAlt(prompt, resolution) {
-  let width, height;
-  if (resolution == 'Square') {
-    width = 1024;
-    height = 1024;
-  } else if (resolution == 'Wide') {
-    width = 1280;
-    height = 768;
-  } else if (resolution == 'Portrait') {
-    width = 768;
-    height = 1280;
-  }
-  return new Promise((resolve, reject) => {
-    try {
-      const url = "https://bytedance-hyper-sdxl-1step-t2i.hf.space";
-      const randomDigit = generateRandomDigits();
-      const session_hash = generateSessionHash();
-      const urlFirstRequest = `${url}/queue/join?`;
-      const dataFirstRequest = {
-        "data": [1, height, width, prompt, randomDigit],
-        "event_data": null,
-        "fn_index": 0,
-        "trigger_id": 9,
-        "session_hash": session_hash
-      };
-
-      axios.post(urlFirstRequest, dataFirstRequest).then(responseFirst => {
-
-        const urlSecondRequest = `${url}/queue/data?session_hash=${session_hash}`;
-
-        const eventSource = new EventSource(urlSecondRequest);
-
-        eventSource.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-
-          if (data.msg === "process_completed") {
-            eventSource.close();
-            if (data?.output?.data?.[0]?.[0]?.image?.url) {
-              const full_url = data.output.data[0][0].image.url;
-              resolve({ images: [{ url: full_url }], modelUsed: "SD-XL-Alt" });
-            } else {
-              reject(new Error("Invalid path: URL does not exist."));
-            }
-          }
-        };
-        eventSource.onerror = (error) => {
-          eventSource.close();
-          reject(error);
-        };
-      }).catch(error => {
-        reject(error);
-      });
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-function generateWithSDXL(prompt) {
-  return new Promise((resolve, reject) => {
-    try {
-      const url = "https://h1t-tcd.hf.space";
-      const session_hash = generateSessionHash();
-      const urlFirstRequest = `${url}/queue/join?`;
-      const dataFirstRequest = {
-        "data": [prompt, 16, -1, 0.6],
-        "event_data": null,
-        "fn_index": 2,
-        "trigger_id": 17,
-        "session_hash": session_hash
-      };
-
-      axios.post(urlFirstRequest, dataFirstRequest).then(responseFirst => {
-
-        const urlSecondRequest = `${url}/queue/data?session_hash=${session_hash}`;
-
-        const eventSource = new EventSource(urlSecondRequest);
-
-        eventSource.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-
-          if (data.msg === "process_completed") {
-            eventSource.close();
-            const full_url = data?.["output"]?.["data"]?.[0]?.["url"];
-            if (!full_url) {
-              throw new Error("The generated URL does not exist.");
-            }
-            resolve({ images: [{ url: full_url }], modelUsed: "SD-XL" });
-          }
-        };
-        eventSource.onerror = (error) => {
-          eventSource.close();
-          reject(error);
-        };
-      }).catch(error => {
-        reject(error);
-      });
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-function generateWithRedmond(prompt, resolution) {
-  let size;
-  if (resolution == 'Square') {
-    size = '1024 x 1024';
-  } else if (resolution == 'Wide') {
-    size = '1344 x 768';
-  } else if (resolution == 'Portrait') {
-    size = '896 x 1152';
-  }
-  return new Promise(async (resolve, reject) => {
-    const randomDigit = generateRandomDigits();
-    const sessionHash = generateSessionHash();
-
-    try {
-      // First request to initiate the process
-      await fetch("https://artificialguybr-cinematicredmond-free-demo.hf.space/queue/join?", {
-        method: "POST",
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          data: [
-            prompt, `(rating_explicit:1.2), ${nevPrompt}`, randomDigit, 1024, 1024, 4, 35, "DPM++ 2M SDE Karras", size, false, 0.55, 1.5
-          ],
-          event_data: null,
-          fn_index: 9,
-          trigger_id: 7,
-          session_hash: sessionHash,
-        }),
-      });
-
-      // Using EventSource to listen for server-sent events
-      const es = new EventSource(`https://artificialguybr-cinematicredmond-free-demo.hf.space/queue/data?session_hash=${sessionHash}`);
-
-      es.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.msg === 'process_completed') {
-          es.close();
-          const outputUrl = data?.output?.data?.[0]?.[0]?.image?.url;
-          if (!outputUrl) {
-            throw new Error("The generated URL does not exist.");
-          }
-          resolve({ images: [{ url: outputUrl }], modelUsed: "Redmond" });
-        }
-      };
-
-      es.onerror = (error) => {
-        es.close();
-        reject(error);
-      };
-
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-async function generateWithJuggernaut(prompt, resolution) {
-  let size;
-  if (resolution == 'Square') {
-    size = '1024 x 1024';
-  } else if (resolution == 'Wide') {
-    size = '1344 x 768';
-  } else if (resolution == 'Portrait') {
-    size = '896 x 1152';
-  }
-  return new Promise(async (resolve, reject) => {
-    const randomDigit = generateRandomDigits();
-    const sessionHash = generateSessionHash();
-  
-    try {
-      // First request to initiate the process
-      await fetch("https://damarjati-playground.hf.space/queue/join?", {
-        method: "POST",
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          data: [
-              prompt, `(rating_explicit:1.2), ${nevPrompt}`, randomDigit, 1024, 1024, 4, 35, "DPM++ 2M SDE Karras", size, "(None)", "(None)", false, 0.55, 1.5, true
-            ],
-          event_data: null,
-          fn_index: 4,
-          trigger_id: 48,
-          session_hash: sessionHash,
-        }),
-      });
-  
-      // Using EventSource to listen for server-sent events
-      const es = new EventSource(`https://damarjati-playground.hf.space/queue/data?session_hash=${sessionHash}`);
-  
-      es.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.msg === 'process_completed') {
-          es.close();
-          const outputUrl = data?.output?.data?.[0]?.[0]?.image?.url;
-          if (!outputUrl) {
-            reject(new Error('Invalid or missing output URL'));
-          } else {
-            resolve({ images: [{ url: outputUrl }], modelUsed: "Juggernaut" });
-          }
-        }
-      };
-  
-      es.onerror = (error) => {
-        es.close();
-        reject(error);
-      };
-  
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-async function generateWithDalle3(prompt) {
-  try {
-    const headers = {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+  return combinedHistory.map(entry => {
+    return {
+      role: entry.role === 'assistant' ? 'model' : entry.role,
+      parts: entry.content
     };
-  
-    const body = JSON.stringify({
-      model: "dall-e-3",
-      prompt: prompt,
-      n: 1
-    });
-  
-    // Create a new promise that rejects in 15 seconds to represent the timeout
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => {
-        reject(new Error('Request timed out (15 seconds limit)'));
-      }, 15000);
-    });
-
-    // Modify the fetch call to race against the timeout promise
-    const fetchPromise = fetch(`${process.env.OPENAI_BASE_URL}/images/generations` || 'https://api.openai.com/v1/images/generations', {
-      method: 'POST', headers, body
-    });
-
-    // Use Promise.race to see which promise settles first: the fetch call or the timeout
-    const response = await Promise.race([fetchPromise, timeoutPromise]);
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(`${response.status} ${data?.message || ''}`);
-    }
-    return { images: data.data, modelUsed: "Dall-e-3" };
-  } catch (error) {
-    console.log(error);
-    throw error;
-  }
+  });
 }
 
-const nsfwWordsArray = [
-  "2g1c", "2 girls 1 cup", "acrotomophilia", "alabama hot pocket", "alaskan pipeline", "anal", "anilingus", "anus", "apeshit", "arsehole", "ass", "asshole",
-  "assmunch", "auto erotic", "autoerotic", "babeland", "baby batter", "baby juice", "ball gag", "ball gravy", "ball kicking", "ball licking", "ball sack", "ball sucking",
-  "bangbros", "bangbus", "bareback", "barely legal", "barenaked", "bastard", "bastardo", "bastinado", "bbw", "bdsm", "beaner", "beaners", "beaver cleaver", "beaver lips",
-  "beastiality", "bestiality", "big black", "big breasts", "big knockers", "big tits", "bimbos", "birdlock", "bitch", "bitches", "black cock", "blonde action",
-  "blonde on blonde action", "blowjob", "blow job", "blow your load", "blue waffle", "blumpkin", "bollocks", "bondage", "boner", "boob", "boobs", "booty call",
-  "brown showers", "brunette action", "bukkake", "bulldyke", "bullet vibe", "bullshit", "bung hole", "bunghole", "busty", "butt", "buttcheeks", "butthole", "camel toe",
-  "camgirl", "camslut", "camwhore", "carpet muncher", "carpetmuncher", "chocolate rosebuds", "cialis", "circlejerk", "cleveland steamer", "clit", "clitoris",
-  "clover clamps", "clusterfuck", "cock", "cocks", "coprolagnia", "coprophilia", "cornhole", "coon", "coons", "creampie", "cum", "cumming", "cumshot", "cumshots",
-  "cunnilingus", "cunt", "darkie", "date rape", "daterape", "deep throat", "deepthroat", "dendrophilia", "dick", "dildo", "dingleberry", "dingleberries",
-  "dirty pillows", "dirty sanchez", "doggie style", "doggiestyle", "doggy style", "doggystyle", "dog style", "dolcett", "domination", "dominatrix", "dommes",
-  "donkey punch", "double dong", "double penetration", "dp action", "dry hump", "dvda", "eat my ass", "ecchi", "ejaculation", "erotic", "erotism", "escort",
-  "eunuch", "fag", "faggot", "fecal", "felch", "fellatio", "feltch", "female squirting", "femdom", "figging", "fingerbang", "fingering", "fisting", "foot fetish",
-  "footjob", "frotting", "fuck", "fuck buttons", "fuckin", "fucking", "fucktards", "fudge packer", "fudgepacker", "futanari", "gangbang", "gang bang",
-  "gay sex", "genitals", "giant cock", "girl on", "girl on top", "girls gone wild", "goatcx", "goatse", "god damn", "gokkun", "golden shower", "goodpoop",
-  "goo girl", "goregasm", "grope", "group sex", "g-spot", "guro", "hand job", "handjob", "hard core", "hardcore", "hentai", "homoerotic", "honkey",
-  "hooker", "horny", "hot carl", "hot chick", "how to kill", "how to murder", "huge fat", "humping", "incest", "intercourse", "jack off", "jail bait",
-  "jailbait", "jelly donut", "jerk off", "jigaboo", "jiggaboo", "jiggerboo", "jizz", "juggs", "kike", "kinbaku", "kinkster", "kinky", "knobbing",
-  "leather restraint", "leather straight jacket", "lemon party", "livesex", "lolita", "lovemaking", "make me come", "male squirting", "masturbat",
-  "masturbating", "masturbation", "menage a trois", "milf", "missionary position", "mong", "motherfucker", "mound of venus", "mr hands", "muff diver",
-  "muffdiving", "nambla", "nawashi", "negro", "neonazi", "nigga", "nigger", "nig nog", "nimphomania", "nipple", "nipples", "nsfw", "nsfw images",
-  "nude", "nudity", "nutten", "nympho", "nymphomania", "octopussy", "omorashi", "one cup two girls", "one guy one jar", "orgasm", "orgy", "paedophile",
-  "paki", "panties", "panty", "pedobear", "pedophile", "pegging", "penis", "phone sex", "piece of shit", "pikey", "pissing", "piss pig", "pisspig",
-  "playboy", "pleasure chest", "pole smoker", "ponyplay", "poof", "poon", "poontang", "punany", "poop chute", "poopchute", "porn", "porno",
-  "pornography", "prince albert piercing", "pthc", "pubes", "pussy", "queaf", "queef", "quim", "raghead", "raging boner", "rape", "raping",
-  "rapist", "rectum", "reverse cowgirl", "rimjob", "rimming", "rosy palm", "rosy palm and her 5 sisters", "rusty trombone", "sadism", "santorum",
-  "scat", "schlong", "scissoring", "semen", "sex", "sexcam", "sexo", "sexy", "sexual", "sexually", "sexuality", "shaved beaver", "shaved pussy",
-  "shemale", "shibari", "shit", "shitblimp", "shitty", "shota", "shrimping", "skeet", "slanteye", "slut", "s&m", "smut", "snatch",
-  "snowballing", "sodomize", "sodomy", "spastic", "spic", "splooge", "splooge moose", "spooge", "spread legs", "spunk", "strap on", "strapon",
-  "strappado", "strip club", "style doggy", "suck", "sucks", "suicide girls", "sultry women", "swastika", "swinger", "tainted love", "taste my",
-  "tea bagging", "threesome", "throating", "thumbzilla", "tied up", "tight white", "tit", "tits", "titties", "titty", "tongue in a",
-  "topless", "tosser", "towelhead", "tranny", "tribadism", "tub girl", "tubgirl", "tushy", "twat", "twink", "twinkie", "two girls one cup",
-  "undressing", "upskirt", "urethra play", "urophilia", "vagina", "venus mound", "viagra", "vibrator", "violet wand", "vorarephilia", "voyeur",
-  "voyeurweb", "voyuer", "vulva", "wank", "wetback", "wet dream", "white power", "whore", "worldsex", "wrapping men", "wrinkled starfish",
-  "xx", "xxx", "yaoi", "yellow showers", "yiffy", "zoophilia", "🖕",
-    "sex", "nude", "naked", "porn", "erotic", "fuck", "shit",
-    "bitch", "dick", "cock", "pussy", "asshole", "fag", "bastard",
-    "slut", "whore", "hentai", "boobs", "tits", "penis", "vagina",
-    "cum", "sperm", "orgasm", "masturbat", "masterbat", "bukkake", "fetish",
-    "bdsm", "blowjob", "handjob", "milf", "cunt", "gangbang", "prostitute",
-    "stripper", "adult", "hardcore", "sextoy", "sextoys", "porno",
-    "xnxx", "xvideos", "pornhub", "threesome", "swinger", "nymphomania",
-    "nympho", "erotica", "sensual", "clitoris", "labia", "scrotum",
-    "premature", "ejaculation", "incest", "bestiality", "voyeurism",
-    "exhibitionist", "sadism", "masochism", "lubes", "lubricants",
-    "dildo", "vibrator", "fleshlight", "bondage", "domination",
-    "submissive", "sadomasochism", "fellatio", "cunnilingus",
-    "rimming", "sixtynine", "deepthroat", "gagging", "squirting",
-    "fisting", "pornstar", "adultfilm", "adultvideo", "sexwork",
-    "sexworker", "escort", "hooker", "callgirl", "redlight", "huge"
-];
+function updateChatHistory(id, newHistory, messagesId) {
+  if (!chatHistories[id]) {
+    chatHistories[id] = {};
+  }
 
-function filterPrompt(text) {
-  nsfwWordsArray.forEach(word => {
-    const regexPattern = new RegExp(word.split('').join('\\W*'), 'gi');
-    text = text.replace(regexPattern, '');
-  });
-  return text;
+  if (!chatHistories[id][messagesId]) {
+    chatHistories[id][messagesId] = [];
+  }
+
+  chatHistories[id][messagesId] = [...chatHistories[id][messagesId], ...newHistory];
 }
 
 // <==========>
