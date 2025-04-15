@@ -31,13 +31,11 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getTextExtractor } from 'office-text-extractor'
-import * as cheerio from 'cheerio';
 import osu from 'node-os-utils';
-const { mem } = osu;
-const { cpu } = osu;
+const { mem, cpu } = osu;
 import axios from 'axios';
 
-const config = JSON.parse(fs.readFileSync('config.json', 'utf-8'));
+import config from './config.js';
 
 const client = new Client({
   intents: [
@@ -193,7 +191,7 @@ loadStateFromFile();
 
 // <=====[Configuration]=====>
 
-const MODEL = "gemini-1.5-flash-latest";
+const MODEL = "gemini-2.0-flash";
 
 /*
 `BLOCK_NONE`  -  Always show regardless of probability of unsafe content
@@ -304,7 +302,8 @@ client.once('ready', async () => {
 
 client.on('messageCreate', async (message) => {
   try {
-    if (message.author.id === client.user.id) return;
+    if (message.author.bot) return;
+    if (message.content.startsWith('!')) return;
 
     const isDM = message.channel.type === ChannelType.DM;
     const mentionPattern = new RegExp(`^<@!?${client.user.id}>(?:\\s+)?(generate|imagine)`, 'i');

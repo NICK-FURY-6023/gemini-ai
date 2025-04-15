@@ -1,0 +1,57 @@
+{
+  "1361676118737813567": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "text": "search Karo mil gaya hai"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "text": ""
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "functionCall": {
+            "name": "web_search",
+            "args": {
+              "query": "Karo mil gaya hai"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        [
+          {
+            "functionResponse": {
+              "name": "web_search",
+              "response": {
+                "query": "Karo mil gaya hai",
+                "content": "Error while performing web search: Error: Failed to perform the initial search request: write EPROTO 803C79AE5A7F0000:error:0A000458:SSL routines:ssl3_read_bytes:tlsv1 unrecognized name:ssl/record/rec_layer_s3.c:907:SSL alert number 112\n"
+              }
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "text": "I encountered an error when searching for \"Karo mil gaya hai.\" I will try a different approach. Can you provide more context or information about what you are looking for?\n"
+        }
+      ]
+    }
+  ]
+}
